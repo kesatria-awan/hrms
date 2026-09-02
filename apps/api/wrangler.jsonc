@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "tracky",
+  "name": "hrms",
   "main": "src/app.ts",
   "compatibility_date": "2024-11-05",
   "compatibility_flags": [
@@ -13,116 +13,47 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "tracky",
-      "database_id": "463af297-1704-4b5a-9690-4a4f2443c04d",
+      "database_name": "hrms",
+      "database_id": "d16bc0a0-0e1d-4b85-84b3-3ce20850f211",
       "migrations_dir": "src/db/migrations"
     }
   ],
   "r2_buckets": [
     {
       "binding": "R2_BUCKET",
-      "bucket_name": "tracky-attachments"
+      "bucket_name": "hrms-documents"
     }
   ],
-  "images": {
-    "binding": "IMAGES"
-  },
-  // Note: Secrets should be set via `wrangler secret put <SECRET_NAME>`
-  // - CHIP_API_KEY (from CHIP Dashboard > API Keys)
-  // - CHIP_BRAND_ID (from CHIP Dashboard > Brands)
-  // - JWT_SECRET (for JWT signing/verification)
-  // - BREVO_API_KEY (for transactional email via Brevo)
-  // JWT_SECRET is also included here for local dev/test; production uses `wrangler secret put`
   "vars": {
-    "JWT_SECRET": "test-jwt-secret-at-least-32-chars-long-for-dev",
-    "EMAIL_PROVIDER": "securemail"
+    "JWT_SECRET": "dev-only-jwt-secret-change-in-prod-32chars",
+    "EMAIL_PROVIDER": "mailcow",
+    "FRONTEND_URL": "https://hr.kesatria.my"
   },
-
   "observability": {
     "logs": {
-      "enabled": true,
-      "destinations": [
-        "grafana-logs"
-      ],
-      "invocation_logs": true
-    },
-    "traces": {
-      "enabled": true,
-      "destinations": [
-        "grafana-traces"
-      ]
+      "enabled": true
     }
   },
-
-  // Cron trigger for subscription auto-renewal (daily at 2 AM UTC)
-  "triggers": {
-    "crons": ["0 2 * * *"]
-  },
-
-  // Environment-specific configurations
-  // Update database_id values with actual IDs from Cloudflare dashboard
   "env": {
     "dev": {
-      "name": "dev-tracky",
+      "name": "dev-hrms",
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "dev-tracky",
-          "database_id": "8bb16448-17b7-4680-81b1-8ba94234457a",
+          "database_name": "dev-hrms",
+          "database_id": "1ee7abe6-a043-4411-be74-0a57c7bfdf72",
           "migrations_dir": "src/db/migrations"
         }
       ],
       "r2_buckets": [
         {
           "binding": "R2_BUCKET",
-          "bucket_name": "tracky-attachments-dev"
+          "bucket_name": "dev-hrms-documents"
         }
       ],
       "vars": {
-        "FRONTEND_URL": "https://dev.tracky.pro",
-        "EMAIL_PROVIDER": "securemail"
-      }
-    },
-    "uat": {
-      "name": "uat-tracky",
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "uat-tracky",
-          "database_id": "bb29134d-4234-40bd-82e9-fb88891e1288",
-          "migrations_dir": "src/db/migrations"
-        }
-      ],
-      "r2_buckets": [
-        {
-          "binding": "R2_BUCKET",
-          "bucket_name": "tracky-attachments-uat"
-        }
-      ],
-      "vars": {
-        "R2_BUCKET_NAME": "tracky-attachments-uat",
-        "FRONTEND_URL": "https://uat.tracky.pro",
-        "EMAIL_PROVIDER": "securemail"
-      }
-    },
-    "production": {
-      "name": "tracky",
-      "d1_databases": [
-        {
-          "binding": "DB",
-          "database_name": "tracky",
-          "database_id": "463af297-1704-4b5a-9690-4a4f2443c04d",
-          "migrations_dir": "src/db/migrations"
-        }
-      ],
-      "r2_buckets": [
-        {
-          "binding": "R2_BUCKET",
-          "bucket_name": "tracky-attachments"
-        }
-      ],
-      "vars": {
-        "FRONTEND_URL": "https://app.tracky.pro"
+        "FRONTEND_URL": "https://dev-hrms.kesatria.my",
+        "EMAIL_PROVIDER": "mailcow"
       }
     }
   }
