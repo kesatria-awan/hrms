@@ -1,0 +1,24 @@
+{
+    "name": "@tracky/api-client",
+    "type": "module",
+    "version": "1.0.0",
+    "main": "./dist/index.js",
+    "scripts": {
+      "dev": "tsc --watch",
+      "build": "rm -rf dist && tsc",
+      "lint": "eslint .",
+      "typecheck": "tsc --noEmit"
+    },
+    "dependencies": {
+      "@tracky/api": "workspace:^",
+      "@tracky/eslint-config": "workspace:^",
+      "hono": "^4.10.4"
+    },
+    "devDependencies": {
+      "@cloudflare/workers-types": "^4.20251106.1",
+      "@types/node": "^24.10.0",
+      "eslint": "^9.39.1",
+      "typescript": "~5.9.3"
+    }
+  }
+  

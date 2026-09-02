@@ -1,0 +1,17 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "tracky-api",
+    "main": "src/app.ts",
+    "compatibility_date": "2024-11-05",
+    "compatibility_flags": [
+      "nodejs_compat"
+    ],
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "tracky-api",
+        "database_id": "00000000-0000-0000-0000-000000000000",
+        "migrations_dir": "src/db/migrations"
+      }
+    ]
+}
