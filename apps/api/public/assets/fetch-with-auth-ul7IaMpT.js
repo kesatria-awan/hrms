@@ -1,0 +1,1 @@
+import{b as o}from"./index-Ciy2NjdS.js";async function i(r,t){const s=o.getToken(),e=new Headers(t?.headers);s&&e.set("Authorization",`Bearer ${s}`);let a=await fetch(r,{...t,headers:e,credentials:"include"});if(a.status===401){const n=await o.refresh();n&&(e.set("Authorization",`Bearer ${n}`),a=await fetch(r,{...t,headers:e,credentials:"include"}))}return a}export{i as f};
