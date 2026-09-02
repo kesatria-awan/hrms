@@ -1,17 +1,129 @@
 {
-    "$schema": "node_modules/wrangler/config-schema.json",
-    "name": "tracky-api",
-    "main": "src/app.ts",
-    "compatibility_date": "2024-11-05",
-    "compatibility_flags": [
-      "nodejs_compat"
-    ],
-    "d1_databases": [
-      {
-        "binding": "DB",
-        "database_name": "tracky-api",
-        "database_id": "00000000-0000-0000-0000-000000000000",
-        "migrations_dir": "src/db/migrations"
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tracky",
+  "main": "src/app.ts",
+  "compatibility_date": "2024-11-05",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "tracky",
+      "database_id": "463af297-1704-4b5a-9690-4a4f2443c04d",
+      "migrations_dir": "src/db/migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "R2_BUCKET",
+      "bucket_name": "tracky-attachments"
+    }
+  ],
+  "images": {
+    "binding": "IMAGES"
+  },
+  // Note: Secrets should be set via `wrangler secret put <SECRET_NAME>`
+  // - CHIP_API_KEY (from CHIP Dashboard > API Keys)
+  // - CHIP_BRAND_ID (from CHIP Dashboard > Brands)
+  // - JWT_SECRET (for JWT signing/verification)
+  // - BREVO_API_KEY (for transactional email via Brevo)
+  // JWT_SECRET is also included here for local dev/test; production uses `wrangler secret put`
+  "vars": {
+    "JWT_SECRET": "test-jwt-secret-at-least-32-chars-long-for-dev",
+    "EMAIL_PROVIDER": "securemail"
+  },
+
+  "observability": {
+    "logs": {
+      "enabled": true,
+      "destinations": [
+        "grafana-logs"
+      ],
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": true,
+      "destinations": [
+        "grafana-traces"
+      ]
+    }
+  },
+
+  // Cron trigger for subscription auto-renewal (daily at 2 AM UTC)
+  "triggers": {
+    "crons": ["0 2 * * *"]
+  },
+
+  // Environment-specific configurations
+  // Update database_id values with actual IDs from Cloudflare dashboard
+  "env": {
+    "dev": {
+      "name": "dev-tracky",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "dev-tracky",
+          "database_id": "8bb16448-17b7-4680-81b1-8ba94234457a",
+          "migrations_dir": "src/db/migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "R2_BUCKET",
+          "bucket_name": "tracky-attachments-dev"
+        }
+      ],
+      "vars": {
+        "FRONTEND_URL": "https://dev.tracky.pro",
+        "EMAIL_PROVIDER": "securemail"
       }
-    ]
+    },
+    "uat": {
+      "name": "uat-tracky",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "uat-tracky",
+          "database_id": "bb29134d-4234-40bd-82e9-fb88891e1288",
+          "migrations_dir": "src/db/migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "R2_BUCKET",
+          "bucket_name": "tracky-attachments-uat"
+        }
+      ],
+      "vars": {
+        "R2_BUCKET_NAME": "tracky-attachments-uat",
+        "FRONTEND_URL": "https://uat.tracky.pro",
+        "EMAIL_PROVIDER": "securemail"
+      }
+    },
+    "production": {
+      "name": "tracky",
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "tracky",
+          "database_id": "463af297-1704-4b5a-9690-4a4f2443c04d",
+          "migrations_dir": "src/db/migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "R2_BUCKET",
+          "bucket_name": "tracky-attachments"
+        }
+      ],
+      "vars": {
+        "FRONTEND_URL": "https://app.tracky.pro"
+      }
+    }
+  }
 }

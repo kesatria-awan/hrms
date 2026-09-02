@@ -1,10 +1,19 @@
-import { createFileRoute, Link } from "@tanstack/react-router"
+import { createFileRoute, Link, Navigate } from "@tanstack/react-router"
 import { Button } from "@tracky/web/components/ui/button"
-import { LayoutDashboard, CheckCircle2, Zap, Shield } from "lucide-react"
+import { CheckCircle2, Zap, Shield } from "lucide-react"
+import { TrackyLogo } from "@tracky/web/components/tracky-logo"
+import { useAuth } from "@tracky/web/contexts/auth-context"
 
 export const Route = createFileRoute("/")({
-  component: LandingPage,
+  component: IndexPage,
 })
+
+function IndexPage() {
+  const { isAuthenticated, isLoading } = useAuth()
+  if (isLoading) return null
+  if (isAuthenticated) return <Navigate to="/dashboard" />
+  return <LandingPage />
+}
 
 function LandingPage() {
   return (
@@ -13,14 +22,14 @@ function LandingPage() {
       <header className="px-6 h-16 flex items-center justify-between border-b border-border/40 backdrop-blur sticky top-0 z-50">
         <div className="flex items-center gap-2 font-bold text-xl">
           <div className="bg-primary text-primary-foreground p-1 rounded-md">
-            <LayoutDashboard className="h-5 w-5" />
+            <TrackyLogo className="h-5 w-5" />
           </div>
-          Tracky
+          Tracky Pro
         </div>
         <div className="flex items-center gap-4">
-          <Link to="/login" className="text-sm font-medium hover:text-primary transition-colors">Log In</Link>
+          <Link to="/login" search={{ message: undefined, error: undefined }} className="text-sm font-medium hover:text-primary transition-colors">Log In</Link>
           <Button asChild>
-            <Link to="/signup">Get Started</Link>
+            <Link to="/signup" search={{ error: undefined }}>Sign Up</Link>
           </Button>
         </div>
       </header>
@@ -38,7 +47,7 @@ function LandingPage() {
         </div>
         <div className="flex items-center gap-4">
           <Button size="lg" className="h-12 px-8 text-base" asChild>
-            <Link to="/signup">Start your free workspace</Link>
+            <Link to="/signup" search={{ error: undefined }}>Start your free workspace</Link>
           </Button>
           <Button size="lg" variant="outline" className="h-12 px-8 text-base">
             View Demo
@@ -87,11 +96,11 @@ function LandingPage() {
           <div className="space-y-4">
             <div className="flex items-center gap-2 font-bold text-lg">
               <div className="bg-primary text-primary-foreground p-1 rounded-md">
-                <LayoutDashboard className="h-4 w-4" />
+                <TrackyLogo className="h-4 w-4" />
               </div>
-              Tracky
+              Tracky Pro
             </div>
-            <p className="text-sm text-muted-foreground">© 2026 Tracky Inc. All rights reserved.</p>
+            <p className="text-sm text-muted-foreground">© 2026 Tracky Pro Inc. All rights reserved.</p>
           </div>
           <div className="flex gap-12 text-sm">
             <div className="space-y-3">

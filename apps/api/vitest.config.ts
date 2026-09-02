@@ -17,7 +17,15 @@ export default defineWorkersConfig(async () => {
             configPath: "./wrangler.jsonc",
           },
           miniflare: {
-            bindings: { TEST_MIGRATIONS: migrations },
+            bindings: {
+              TEST_MIGRATIONS: migrations,
+              JWT_SECRET: "test-jwt-secret-minimum-32-characters-long",
+              BREVO_API_KEY: "test-brevo-key",
+              BREVO_WEBHOOK_SECRET: "test-webhook-secret",
+              GOOGLE_CLIENT_ID: "test-google-client-id",
+              GOOGLE_CLIENT_SECRET: "test-google-secret",
+            },
+            r2Buckets: ["R2_BUCKET"],
           },
         },
       },

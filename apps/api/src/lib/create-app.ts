@@ -1,10 +1,10 @@
 import { notFound, onError } from "stoker/middlewares";
 
-import type { AppOpenAPI } from "./types";
-
-import { pinoLogger } from "@/api/middlewares/pino-logger";
 import { BASE_PATH } from "@/api/lib/constants";
 import createRouter from "@/api/lib/create-router";
+import { pinoLogger } from "@/api/middlewares/pino-logger";
+
+import type { AppOpenAPI } from "./types";
 
 export default function createApp() {
   const app = createRouter()

@@ -6,6 +6,7 @@ import packageJSON from "../../package.json" assert { type: "json" };
 import { BASE_PATH } from "./constants";
 
 const APP_VERSION = packageJSON.version;
+// eslint-disable-next-line node/no-process-env -- Build-time check for production mode
 const isBuildProduction = typeof process !== "undefined" && process.env.NODE_ENV === "production";
 const scalarReferenceHandler = Scalar({
   // Theme and Layout
@@ -51,8 +52,9 @@ export default function configureOpenAPI(app: AppOpenAPI) {
         title: "Tracky API",
       },
     });
-  } else {
-    app.get("/doc", (c) => c.notFound());
+  }
+  else {
+    app.get("/doc", c => c.notFound());
   }
 
   app.get("/reference", async (c, next) => {

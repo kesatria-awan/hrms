@@ -6,6 +6,10 @@ import { defineConfig } from "vite"
 
 // https://vite.dev/config/
 export default defineConfig({
+  build: {
+    outDir: "../api/public",
+    emptyOutDir: true
+  },
   plugins: [
     tanstackRouter({
       target: "react",

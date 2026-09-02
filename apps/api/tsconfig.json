@@ -1,25 +1,24 @@
 {
-    "extends": "../../tsconfig.json",
-    "compilerOptions": {
-      "composite": true,
-      "jsx": "react-jsx",
-      "jsxImportSource": "hono/jsx",
-      "baseUrl": "./",
-      "paths": {
-        "@/api/*": ["./src/*"]
-      },
-      "resolveJsonModule": true,
-      "typeRoots": ["./node_modules/@types", "./node_modules/@cloudflare"],
-      "types": [
-        "workers-types/2023-07-01",
-        "vitest-pool-workers",
-        "node"
-      ]
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
+    "baseUrl": "./",
+    "paths": {
+      "@/api/*": ["./src/*"]
     },
-    "include": [
-      "src/**/*",
-      "vitest.config.ts",
-      "drizzle.config.ts"
+    "resolveJsonModule": true,
+    "typeRoots": ["./node_modules/@types", "./node_modules/@cloudflare"],
+    "types": [
+      "workers-types/2023-07-01",
+      "vitest-pool-workers",
+      "node"
     ]
-  }
-  
+  },
+  "include": [
+    "src/**/*",
+    "vitest.config.ts",
+    "drizzle.config.ts"
+  ]
+}

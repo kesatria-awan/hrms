@@ -1,10 +1,14 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { createFileRoute } from "@tanstack/react-router"
+import { toast } from "sonner"
+import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@tracky/web/components/ui/button"
 import { Input } from "@tracky/web/components/ui/input"
 import { Label } from "@tracky/web/components/ui/label"
 import { Separator } from "@tracky/web/components/ui/separator"
 import { Badge } from "@tracky/web/components/ui/badge"
+import { Avatar, AvatarFallback, AvatarImage } from "@tracky/web/components/ui/avatar"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@tracky/web/components/ui/tabs"
 import {
     Card,
     CardContent,
@@ -26,6 +30,7 @@ import {
 } from "@tracky/web/components/ui/alert-dialog"
 import {
     Building2,
+    Bell,
     CreditCard,
     HardDrive,
     Users,
@@ -33,61 +38,379 @@ import {
     AlertTriangle,
     Shield,
     Clock,
-    ExternalLink,
     CheckCircle2,
     XCircle,
-    AlertCircle,
+    Loader2,
+    Upload,
+    User,
 } from "lucide-react"
+import {
+    useWorkspaceSettings,
+    useUpdateWorkspaceSettings,
+    useWorkspaceAuditLogs,
+    useCreateCheckout,
+    useCancelSubscription,
+} from "@tracky/web/hooks/use-workspace-settings"
+import { Switch } from "@tracky/web/components/ui/switch"
+import { useNotificationPreferences, useUpdateNotificationPreferences } from "@tracky/web/hooks/use-notification-preferences"
+import { useApi } from "@tracky/web/hooks/use-api"
+import { useQuery } from "@tanstack/react-query"
+import { authManager } from "@tracky/web/lib/auth-manager"
+
+interface AuditLogEntry {
+    id: string
+    actorId: string
+    action: string
+    resourceType: string
+    resourceId: string | null
+    metadata: unknown
+    createdAt: string
+    actorEmail: string | null
+}
 
 export const Route = createFileRoute("/_authenticated/settings")({
     component: SettingsPage,
+    validateSearch: (search: Record<string, unknown>) => ({
+        billing: (search.billing as string) || undefined,
+    }),
 })
 
-// Mock data for audit logs
-const auditLogs = [
-    {
-        id: 1,
-        event: "Cross-tenant access blocked",
-        user: "john@external.com",
-        details: "Attempted to access workspace from unauthorized tenant",
-        timestamp: "2024-01-15 14:32:00",
-        status: "blocked",
-    },
-    {
-        id: 2,
-        event: "Admin role granted",
-        user: "sarah@acme.com",
-        details: "User promoted to Workspace Admin",
-        timestamp: "2024-01-14 09:15:00",
-        status: "success",
-    },
-    {
-        id: 3,
-        event: "Login from new device",
-        user: "mike@acme.com",
-        details: "New device: MacBook Pro, San Francisco, CA",
-        timestamp: "2024-01-13 18:45:00",
-        status: "warning",
-    },
-    {
-        id: 4,
-        event: "Cross-tenant access blocked",
-        user: "attacker@malicious.com",
-        details: "Multiple failed attempts from IP 192.168.1.100",
-        timestamp: "2024-01-12 03:22:00",
-        status: "blocked",
-    },
-    {
-        id: 5,
-        event: "API key regenerated",
-        user: "admin@acme.com",
-        details: "Workspace API key was regenerated",
-        timestamp: "2024-01-11 11:00:00",
-        status: "success",
-    },
-]
+function formatBytes(bytes: number): string {
+    if (bytes === 0) return "0 B"
+    const units = ["B", "KB", "MB", "GB", "TB"]
+    const i = Math.floor(Math.log(bytes) / Math.log(1024))
+    const value = bytes / Math.pow(1024, i)
+    return `${value.toFixed(value < 10 && i > 0 ? 1 : 0)} ${units[i]}`
+}
 
-function SettingsPage() {
+function formatAuditAction(action: string): string {
+    return action.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+}
+
+// Profile Tab Content
+function ProfileContent() {
+    const { data: authData } = useWorkspaceSettings()
+    const queryClient = useQueryClient()
+    const user = authData?.user
+    const workspace = authData?.workspace
+
+    const [firstName, setFirstName] = useState(user?.firstName ?? "")
+    const [lastName, setLastName] = useState(user?.lastName ?? "")
+    const [avatarFile, setAvatarFile] = useState<File | null>(null)
+    const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+    const [isSaving, setIsSaving] = useState(false)
+
+    const fileInputRef = useRef<HTMLInputElement>(null)
+    const prevPreviewRef = useRef<string | null>(null)
+
+    // Sync form state when user data loads/updates
+    useEffect(() => {
+        if (user?.firstName !== undefined) setFirstName(user.firstName ?? "")
+        if (user?.lastName !== undefined) setLastName(user.lastName ?? "")
+    }, [user?.firstName, user?.lastName])
+
+    // Cleanup object URLs on unmount
+    useEffect(() => {
+        return () => {
+            if (prevPreviewRef.current) {
+                URL.revokeObjectURL(prevPreviewRef.current)
+            }
+        }
+    }, [])
+
+    const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+
+        // Validate size (2 MB max)
+        if (file.size > 2 * 1024 * 1024) {
+            toast.error("File must be under 2 MB")
+            // Reset input
+            if (fileInputRef.current) fileInputRef.current.value = ""
+            return
+        }
+
+        // Validate MIME type
+        const allowedTypes = ["image/jpeg", "image/png", "image/webp"]
+        if (!allowedTypes.includes(file.type)) {
+            toast.error("Only JPEG, PNG, and WebP images are supported")
+            if (fileInputRef.current) fileInputRef.current.value = ""
+            return
+        }
+
+        // Revoke old preview
+        if (prevPreviewRef.current) {
+            URL.revokeObjectURL(prevPreviewRef.current)
+        }
+
+        const previewUrl = URL.createObjectURL(file)
+        prevPreviewRef.current = previewUrl
+        setAvatarFile(file)
+        setAvatarPreview(previewUrl)
+    }
+
+    const handleSave = async () => {
+        const hasNameChange = firstName !== (user?.firstName ?? "") || lastName !== (user?.lastName ?? "")
+        const hasAvatarChange = avatarFile !== null
+
+        if (!hasNameChange && !hasAvatarChange) {
+            toast.info("No changes to save.")
+            return
+        }
+
+        setIsSaving(true)
+        try {
+            // Upload avatar first if changed
+            if (hasAvatarChange && avatarFile) {
+                const formData = new FormData()
+                formData.append("file", avatarFile)
+                const avatarRes = await fetch("/api/auth/avatar", {
+                    method: "POST",
+                    body: formData,
+                    credentials: "include",
+                    headers: { "Authorization": `Bearer ${authManager.getToken()}` },
+                })
+                if (!avatarRes.ok) {
+                    const err = await avatarRes.json() as { message?: string }
+                    throw new Error(err.message ?? "Failed to upload avatar")
+                }
+            }
+
+            // Update name if changed
+            if (hasNameChange) {
+                const profileRes = await fetch("/api/auth/profile", {
+                    method: "PATCH",
+                    body: JSON.stringify({ firstName, lastName }),
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${authManager.getToken()}`,
+                    },
+                    credentials: "include",
+                })
+                if (!profileRes.ok) {
+                    const err = await profileRes.json() as { message?: string }
+                    throw new Error(err.message ?? "Failed to update profile")
+                }
+            }
+
+            // Invalidate queries so all components reflect new data
+            await queryClient.invalidateQueries({ queryKey: ["auth", "me"] })
+            if (workspace?.slug) {
+                await queryClient.invalidateQueries({ queryKey: ["workspace", workspace.slug, "members"] })
+            }
+
+            // Clear the pending avatar file
+            setAvatarFile(null)
+            setAvatarPreview(null)
+            if (prevPreviewRef.current) {
+                URL.revokeObjectURL(prevPreviewRef.current)
+                prevPreviewRef.current = null
+            }
+            if (fileInputRef.current) fileInputRef.current.value = ""
+
+            toast.success("Profile updated.")
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to update profile"
+            toast.error(message)
+        } finally {
+            setIsSaving(false)
+        }
+    }
+
+    const currentAvatarSrc = avatarPreview ?? user?.avatarUrl ?? user?.imageUrl ?? undefined
+
+    const userInitials = user?.firstName && user?.lastName
+        ? `${user.firstName[0]}${user.lastName[0]}`
+        : user?.email?.[0]?.toUpperCase() ?? "U"
+
+    const hasChanges =
+        firstName !== (user?.firstName ?? "") ||
+        lastName !== (user?.lastName ?? "") ||
+        avatarFile !== null
+
+    return (
+        <div className="space-y-6">
+            <div className="space-y-1">
+                <h2 className="text-2xl font-bold tracking-tight">Profile</h2>
+                <p className="text-muted-foreground">
+                    Manage your personal information and avatar.
+                </p>
+            </div>
+
+            <Card>
+                <CardHeader>
+                    <div className="flex items-center gap-2">
+                        <User className="h-5 w-5 text-muted-foreground" />
+                        <CardTitle>Personal Information</CardTitle>
+                    </div>
+                    <CardDescription>
+                        Update your name and profile picture.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                    {/* Avatar section */}
+                    <div className="flex items-center gap-6">
+                        <Avatar className="h-20 w-20">
+                            <AvatarImage src={currentAvatarSrc} alt={user?.firstName ?? "User"} />
+                            <AvatarFallback className="text-lg">{userInitials}</AvatarFallback>
+                        </Avatar>
+                        <div className="space-y-2">
+                            <p className="text-sm font-medium">Profile Picture</p>
+                            <p className="text-xs text-muted-foreground">
+                                JPEG, PNG, or WebP. Max 2 MB.
+                            </p>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isSaving}
+                            >
+                                <Upload className="h-4 w-4 mr-2" />
+                                {avatarFile ? "Change Image" : "Upload Image"}
+                            </Button>
+                            {avatarFile && (
+                                <p className="text-xs text-muted-foreground">
+                                    Selected: {avatarFile.name}
+                                </p>
+                            )}
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                className="hidden"
+                                onChange={handleFileSelect}
+                            />
+                        </div>
+                    </div>
+
+                    <Separator />
+
+                    {/* Name fields */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                            <Label htmlFor="firstName">First Name</Label>
+                            <Input
+                                id="firstName"
+                                value={firstName}
+                                onChange={(e) => setFirstName(e.target.value)}
+                                placeholder="Enter first name"
+                                disabled={isSaving}
+                            />
+                        </div>
+                        <div className="space-y-1.5">
+                            <Label htmlFor="lastName">Last Name</Label>
+                            <Input
+                                id="lastName"
+                                value={lastName}
+                                onChange={(e) => setLastName(e.target.value)}
+                                placeholder="Enter last name"
+                                disabled={isSaving}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Email (read-only) */}
+                    <div className="space-y-1.5">
+                        <Label htmlFor="email">Email</Label>
+                        <Input
+                            id="email"
+                            value={user?.email ?? ""}
+                            readOnly
+                            disabled
+                            className="bg-muted/50 cursor-not-allowed"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                            Email cannot be changed here.
+                        </p>
+                    </div>
+
+                    <Button
+                        onClick={handleSave}
+                        disabled={!hasChanges || isSaving}
+                        className="w-fit"
+                    >
+                        {isSaving ? (
+                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        ) : null}
+                        Save Changes
+                    </Button>
+                </CardContent>
+            </Card>
+        </div>
+    )
+}
+
+// Workspace Settings Tab Content (moved from original SettingsPage)
+function WorkspaceSettingsContent() {
+    const { data: authData } = useWorkspaceSettings()
+    const workspace = authData?.workspace
+    const updateSettings = useUpdateWorkspaceSettings()
+    const createCheckout = useCreateCheckout()
+    const cancelSubscription = useCancelSubscription()
+    const { billing } = Route.useSearch()
+
+    // Use a key derived from workspace data to reset form state when data changes
+    const workspaceKey = `${workspace?.name}:${workspace?.slug}`
+    const [nameOverride, setNameOverride] = useState<{ key: string; value: string } | null>(null)
+    const [slugOverride, setSlugOverride] = useState<{ key: string; value: string } | null>(null)
+
+    const name = nameOverride?.key === workspaceKey ? nameOverride.value : (workspace?.name ?? "")
+    const slug = slugOverride?.key === workspaceKey ? slugOverride.value : (workspace?.slug ?? "")
+    const setName = (v: string) => setNameOverride({ key: workspaceKey, value: v })
+    const setSlug = (v: string) => setSlugOverride({ key: workspaceKey, value: v })
+
+    const [auditPage, setAuditPage] = useState(1)
+
+    const { data: auditData, isLoading: isAuditLoading } = useWorkspaceAuditLogs(
+        workspace?.slug ?? "",
+        { page: auditPage, limit: 10 },
+    )
+
+    // Fetch member count
+    const api = useApi()
+    const { data: membersData } = useQuery({
+        queryKey: ["workspace", workspace?.slug, "members"],
+        queryFn: async () => {
+            const response = await api.workspaces[":slug"].members.$get({
+                param: { slug: workspace!.slug },
+            })
+            if (!response.ok) throw new Error("Failed to fetch members")
+            return response.json()
+        },
+        enabled: !!workspace?.slug,
+    })
+
+    // Handle billing redirect query params
+    useEffect(() => {
+        if (billing === "success") {
+            toast.success("Payment successful! Your workspace is now on Pro.")
+        } else if (billing === "failed") {
+            toast.error("Payment failed. Please try again.")
+        } else if (billing === "cancelled") {
+            toast.info("Payment cancelled.")
+        }
+    }, [billing])
+
+    const handleUpgrade = async () => {
+        if (!workspace) return
+        try {
+            const result = await createCheckout.mutateAsync({ slug: workspace.slug })
+            window.location.href = result.checkoutUrl
+        } catch {
+            toast.error("Failed to create checkout session")
+        }
+    }
+
+    const handleCancelSubscription = async () => {
+        if (!workspace) return
+        try {
+            await cancelSubscription.mutateAsync({ slug: workspace.slug })
+            toast.success("Subscription cancelled. Pro features available until your billing period ends.")
+        } catch {
+            toast.error("Failed to cancel subscription")
+        }
+    }
+
     const [deleteConfirmation, setDeleteConfirmation] = useState("")
     const [retentionStep, setRetentionStep] = useState<
         "initial" | "confirm" | "scheduled"
@@ -104,47 +427,38 @@ function SettingsPage() {
         setRetentionStep("scheduled")
     }
 
-    const getStatusIcon = (status: string) => {
-        switch (status) {
-            case "blocked":
-                return <XCircle className="h-4 w-4 text-destructive" />
-            case "success":
-                return <CheckCircle2 className="h-4 w-4 text-green-600" />
-            case "warning":
-                return <AlertCircle className="h-4 w-4 text-amber-500" />
-            default:
-                return null
-        }
+    const handleSaveSettings = () => {
+        if (!workspace) return
+        const changes: { slug: string; name?: string; newSlug?: string } = { slug: workspace.slug }
+        if (name !== workspace.name) changes.name = name
+        if (slug !== workspace.slug) changes.newSlug = slug
+        if (!changes.name && !changes.newSlug) return
+        updateSettings.mutate(changes)
     }
 
-    const getStatusBadge = (status: string) => {
-        switch (status) {
-            case "blocked":
-                return <Badge variant="destructive">Blocked</Badge>
-            case "success":
-                return (
-                    <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                        Success
-                    </Badge>
-                )
-            case "warning":
-                return (
-                    <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                        Warning
-                    </Badge>
-                )
-            default:
-                return null
-        }
+    if (!workspace) {
+        return (
+            <div className="flex items-center justify-center py-20">
+                <p className="text-muted-foreground">No workspace found.</p>
+            </div>
+        )
     }
+
+    const storageUsed = workspace.storageUsedBytes ?? 0
+    const storageQuota = workspace.storageQuotaBytes ?? 10737418240
+    const storagePercent = storageQuota > 0 ? Math.round((storageUsed / storageQuota) * 100) : 0
+    const storageRemaining = storageQuota - storageUsed
+    const memberCount = membersData?.totalCount ?? 0
+
+    const hasChanges = name !== workspace.name || slug !== workspace.slug
 
     return (
         <div className="space-y-8 animate-in fade-in duration-500">
             <div className="space-y-1">
                 <div className="flex items-center gap-2">
-                    <h1 className="text-3xl font-bold tracking-tight">
+                    <h2 className="text-2xl font-bold tracking-tight">
                         Workspace Settings
-                    </h1>
+                    </h2>
                     <Badge variant="secondary">Admin Only</Badge>
                 </div>
                 <p className="text-muted-foreground">
@@ -167,18 +481,23 @@ function SettingsPage() {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div className="grid w-full items-center gap-1.5">
-                            <Label htmlFor="name">Display Name</Label>
-                            <Input id="name" defaultValue="Acme Corp" />
+                            <Label htmlFor="ws-name">Display Name</Label>
+                            <Input
+                                id="ws-name"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                            />
                         </div>
                         <div className="grid w-full items-center gap-1.5">
-                            <Label htmlFor="slug">URL Slug</Label>
+                            <Label htmlFor="ws-slug">URL Slug</Label>
                             <div className="flex items-center gap-2">
                                 <span className="text-muted-foreground text-sm">
                                     tracky.app/
                                 </span>
                                 <Input
-                                    id="slug"
-                                    defaultValue="acme-corp"
+                                    id="ws-slug"
+                                    value={slug}
+                                    onChange={(e) => setSlug(e.target.value)}
                                     className="max-w-[200px]"
                                 />
                             </div>
@@ -186,7 +505,21 @@ function SettingsPage() {
                                 This is your workspace's unique URL identifier.
                             </p>
                         </div>
-                        <Button className="w-fit">Save Changes</Button>
+                        {updateSettings.isError && (
+                            <p className="text-sm text-destructive">
+                                {updateSettings.error.message}
+                            </p>
+                        )}
+                        <Button
+                            className="w-fit"
+                            onClick={handleSaveSettings}
+                            disabled={!hasChanges || updateSettings.isPending}
+                        >
+                            {updateSettings.isPending ? (
+                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                            ) : null}
+                            Save Changes
+                        </Button>
                     </CardContent>
                 </Card>
 
@@ -196,7 +529,7 @@ function SettingsPage() {
                         <div className="flex items-center gap-2">
                             <HardDrive className="h-5 w-5 text-muted-foreground" />
                             <CardTitle>Storage Usage</CardTitle>
-                            <Badge variant="outline">10 GB Plan</Badge>
+                            <Badge variant="outline">{formatBytes(storageQuota)} Plan</Badge>
                         </div>
                         <CardDescription>
                             Monitor your workspace storage and resource usage.
@@ -210,14 +543,17 @@ function SettingsPage() {
                                     Storage Used
                                 </span>
                                 <span className="text-muted-foreground">
-                                    2.4 GB / 10 GB
+                                    {formatBytes(storageUsed)} / {formatBytes(storageQuota)}
                                 </span>
                             </div>
                             <div className="h-3 w-full bg-secondary rounded-full overflow-hidden">
-                                <div className="h-full bg-primary w-[24%] transition-all" />
+                                <div
+                                    className="h-full bg-primary transition-all"
+                                    style={{ width: `${storagePercent}%` }}
+                                />
                             </div>
                             <p className="text-xs text-muted-foreground">
-                                7.6 GB remaining • Includes files, attachments,
+                                {formatBytes(storageRemaining)} remaining • Includes files, attachments,
                                 and backups
                             </p>
                         </div>
@@ -226,18 +562,12 @@ function SettingsPage() {
                             <div className="flex justify-between text-sm">
                                 <span className="font-medium flex items-center gap-2">
                                     <Users className="h-4 w-4 text-muted-foreground" />
-                                    User Seats
+                                    Members
                                 </span>
                                 <span className="text-muted-foreground">
-                                    4 / 10 Active
+                                    {memberCount} Active
                                 </span>
                             </div>
-                            <div className="h-3 w-full bg-secondary rounded-full overflow-hidden">
-                                <div className="h-full bg-primary w-[40%] transition-all" />
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                                6 seats available • Invite more team members
-                            </p>
                         </div>
                         <div className="flex gap-2">
                             <Button variant="outline" size="sm">
@@ -250,103 +580,192 @@ function SettingsPage() {
                     </CardContent>
                 </Card>
 
-                {/* Billing Info / Subscription - Full width */}
-                <Card className="lg:col-span-2">
+                {/* Billing Info / Subscription - Full width (visible to users with billing permission) */}
+                {(authData?.canManageBilling || authData?.ownsWorkspace) && <Card className="lg:col-span-2">
                     <CardHeader>
                         <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                                 <CreditCard className="h-5 w-5 text-muted-foreground" />
                                 <CardTitle>Billing & Subscription</CardTitle>
                             </div>
-                            <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
-                                Active
-                            </Badge>
+                            {workspace.subscriptionStatus === "active" && (
+                                <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">
+                                    Active
+                                </Badge>
+                            )}
+                            {workspace.subscriptionStatus === "cancelling" && (
+                                <Badge variant="secondary">Cancelling</Badge>
+                            )}
+                            {workspace.subscriptionStatus === "past_due" && (
+                                <Badge variant="destructive">Past Due</Badge>
+                            )}
+                            {workspace.subscriptionStatus === "none" && (
+                                <Badge variant="outline">Free</Badge>
+                            )}
                         </div>
                         <CardDescription>
                             Manage your subscription plan and payment methods.
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* Past due warning */}
+                        {workspace.subscriptionStatus === "past_due" && (
+                            <div className="mb-4 rounded-lg border border-destructive/50 bg-destructive/10 p-4 flex items-start gap-3">
+                                <AlertTriangle className="h-5 w-5 text-destructive mt-0.5" />
+                                <div className="space-y-1">
+                                    <p className="font-medium text-destructive">Payment Failed</p>
+                                    <p className="text-sm text-destructive/80">
+                                        Your last payment failed. Your workspace has been downgraded to the Free plan.
+                                        Retry payment to restore Pro features.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             {/* Current Plan */}
                             <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
                                 <div className="flex items-center justify-between">
                                     <h4 className="font-semibold">
-                                        Business Plan
+                                        {workspace.plan === "pro" ? "Pro Plan" : "Free Plan"}
                                     </h4>
-                                    <p className="text-2xl font-bold">
-                                        $49
-                                        <span className="text-sm font-normal text-muted-foreground">
-                                            /mo
-                                        </span>
-                                    </p>
+                                    <Badge variant={workspace.plan === "pro" ? "default" : "secondary"}>
+                                        {workspace.plan === "pro" ? "Pro" : "Free"}
+                                    </Badge>
                                 </div>
-                                <p className="text-sm text-muted-foreground">
-                                    10 GB storage • 10 user seats • Priority
-                                    support
-                                </p>
-                                <Button variant="outline" size="sm" className="w-full">
-                                    <ExternalLink className="h-4 w-4 mr-1" />
-                                    Upgrade Plan
-                                </Button>
+                                {workspace.plan === "pro" ? (
+                                    <p className="text-sm text-muted-foreground">
+                                        Unlimited boards and members, {formatBytes(storageQuota)} storage
+                                    </p>
+                                ) : (
+                                    <ul className="text-sm text-muted-foreground space-y-1">
+                                        <li>Up to 5 boards</li>
+                                        <li>Up to 25 members</li>
+                                        <li>{formatBytes(storageQuota)} storage</li>
+                                    </ul>
+                                )}
+
+                                {/* Free plan + no subscription = show upgrade */}
+                                {workspace.subscriptionStatus === "none" && workspace.plan === "free" && (
+                                    <Button
+                                        onClick={handleUpgrade}
+                                        disabled={createCheckout.isPending}
+                                        className="w-full"
+                                    >
+                                        {createCheckout.isPending && (
+                                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                        )}
+                                        Upgrade to Pro — RM 49/month
+                                    </Button>
+                                )}
+
+                                {/* Past due = show retry */}
+                                {workspace.subscriptionStatus === "past_due" && (
+                                    <Button
+                                        onClick={handleUpgrade}
+                                        disabled={createCheckout.isPending}
+                                        className="w-full"
+                                    >
+                                        {createCheckout.isPending && (
+                                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                        )}
+                                        Retry Payment
+                                    </Button>
+                                )}
+
+                                {/* Cancelling = show message */}
+                                {workspace.subscriptionStatus === "cancelling" && (
+                                    <div className="text-sm space-y-1">
+                                        <p className="text-muted-foreground">
+                                            Pro until {workspace.billingPeriodEnd
+                                                ? new Date(workspace.billingPeriodEnd).toLocaleDateString()
+                                                : "—"}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">
+                                            Your subscription will not renew.
+                                        </p>
+                                    </div>
+                                )}
                             </div>
 
-                            {/* Payment Method */}
+                            {/* Billing Details / Type */}
                             <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-                                <div>
-                                    <p className="text-sm text-muted-foreground">
-                                        Payment method
-                                    </p>
-                                    <p className="font-medium flex items-center gap-1 mt-1">
-                                        <CreditCard className="h-4 w-4" />
-                                        Visa •••• 4242
-                                    </p>
-                                </div>
-                                <div>
-                                    <p className="text-sm text-muted-foreground">
-                                        Next billing date
-                                    </p>
-                                    <p className="font-medium mt-1">
-                                        February 15, 2024
-                                    </p>
-                                </div>
-                                <Button variant="outline" size="sm" className="w-full">
-                                    Update Payment
-                                </Button>
-                            </div>
-
-                            {/* Quick Actions */}
-                            <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-                                <p className="text-sm font-medium">
-                                    Quick Actions
-                                </p>
-                                <div className="space-y-2">
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="w-full justify-start"
-                                    >
-                                        View Invoices
-                                    </Button>
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="w-full justify-start"
-                                    >
-                                        Download Receipts
-                                    </Button>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="w-full justify-start text-muted-foreground"
-                                    >
-                                        Cancel Subscription
-                                    </Button>
-                                </div>
+                                {workspace.subscriptionStatus === "active" ? (
+                                    <>
+                                        <h4 className="font-semibold">Billing Period</h4>
+                                        <div className="text-sm text-muted-foreground space-y-1">
+                                            <div className="flex justify-between">
+                                                <span>Current period</span>
+                                                <span>
+                                                    {workspace.billingPeriodStart
+                                                        ? new Date(workspace.billingPeriodStart).toLocaleDateString()
+                                                        : "—"}{" "}
+                                                    —{" "}
+                                                    {workspace.billingPeriodEnd
+                                                        ? new Date(workspace.billingPeriodEnd).toLocaleDateString()
+                                                        : "—"}
+                                                </span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                                <span>Next renewal</span>
+                                                <span>
+                                                    {workspace.billingPeriodEnd
+                                                        ? new Date(workspace.billingPeriodEnd).toLocaleDateString()
+                                                        : "—"}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <AlertDialog>
+                                            <AlertDialogTrigger asChild>
+                                                <Button variant="outline" size="sm" className="w-full">
+                                                    Cancel Subscription
+                                                </Button>
+                                            </AlertDialogTrigger>
+                                            <AlertDialogContent>
+                                                <AlertDialogHeader>
+                                                    <AlertDialogTitle>Cancel Subscription?</AlertDialogTitle>
+                                                    <AlertDialogDescription>
+                                                        Your workspace will remain on Pro until the end of the current billing period
+                                                        ({workspace.billingPeriodEnd
+                                                            ? new Date(workspace.billingPeriodEnd).toLocaleDateString()
+                                                            : "—"}).
+                                                        After that, it will be downgraded to the Free plan.
+                                                    </AlertDialogDescription>
+                                                </AlertDialogHeader>
+                                                <AlertDialogFooter>
+                                                    <AlertDialogCancel>Keep Subscription</AlertDialogCancel>
+                                                    <AlertDialogAction
+                                                        onClick={handleCancelSubscription}
+                                                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                                    >
+                                                        {cancelSubscription.isPending && (
+                                                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                                        )}
+                                                        Cancel Subscription
+                                                    </AlertDialogAction>
+                                                </AlertDialogFooter>
+                                            </AlertDialogContent>
+                                        </AlertDialog>
+                                    </>
+                                ) : (
+                                    <>
+                                        <div className="flex items-center justify-between">
+                                            <h4 className="font-semibold">Billing Type</h4>
+                                            <Badge variant="outline">
+                                                {workspace.billingType === "retainer" ? "Retainer" : "Subscription"}
+                                            </Badge>
+                                        </div>
+                                        <p className="text-sm text-muted-foreground">
+                                            {workspace.billingType === "retainer"
+                                                ? "This workspace is managed under a retainer agreement."
+                                                : "This workspace uses a subscription billing model."}
+                                        </p>
+                                    </>
+                                )}
                             </div>
                         </div>
                     </CardContent>
-                </Card>
+                </Card>}
 
                 {/* Audit Logs - Full width */}
                 <Card className="lg:col-span-2">
@@ -361,70 +780,85 @@ function SettingsPage() {
                             </Button>
                         </div>
                         <CardDescription>
-                            Security events and cross-tenant access attempts for
-                            your workspace.
+                            Security events and workspace activity logs.
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
                         <div className="rounded-lg border overflow-hidden">
                             {/* Table Header - Hidden on mobile */}
-                            <div className="hidden md:grid md:grid-cols-[1fr_1.5fr_1fr_1fr_auto] gap-4 p-3 bg-muted/50 text-sm font-medium text-muted-foreground border-b">
-                                <span>Event</span>
+                            <div className="hidden md:grid md:grid-cols-[1fr_1.5fr_1fr_1fr] gap-4 p-3 bg-muted/50 text-sm font-medium text-muted-foreground border-b">
+                                <span>Action</span>
                                 <span>Details</span>
                                 <span>User</span>
                                 <span>Timestamp</span>
-                                <span>Status</span>
                             </div>
                             <div className="divide-y">
-                                {auditLogs.map((log) => (
-                                    <div
-                                        key={log.id}
-                                        className="grid grid-cols-1 md:grid-cols-[1fr_1.5fr_1fr_1fr_auto] gap-2 md:gap-4 p-4 hover:bg-muted/30 transition-colors items-center"
-                                    >
-                                        {/* Mobile: Icon + Event */}
-                                        <div className="flex items-center gap-2">
-                                            <span className="md:hidden">
-                                                {getStatusIcon(log.status)}
-                                            </span>
-                                            <p className="font-medium text-sm">
-                                                {log.event}
+                                {isAuditLoading ? (
+                                    <div className="flex items-center justify-center py-8">
+                                        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                    </div>
+                                ) : auditData?.logs && auditData.logs.length > 0 ? (
+                                    (auditData.logs as AuditLogEntry[]).map((log) => (
+                                        <div
+                                            key={log.id}
+                                            className="grid grid-cols-1 md:grid-cols-[1fr_1.5fr_1fr_1fr] gap-2 md:gap-4 p-4 hover:bg-muted/30 transition-colors items-center"
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <CheckCircle2 className="h-4 w-4 text-green-600 md:hidden" />
+                                                <p className="font-medium text-sm">
+                                                    {formatAuditAction(log.action)}
+                                                </p>
+                                            </div>
+                                            <p className="text-sm text-muted-foreground">
+                                                {log.metadata && typeof log.metadata === "object"
+                                                    ? JSON.stringify(log.metadata)
+                                                    : "—"}
+                                            </p>
+                                            <p className="text-sm text-muted-foreground flex items-center gap-1">
+                                                <Users className="h-3 w-3 md:hidden" />
+                                                {log.actorEmail ?? "Unknown"}
+                                            </p>
+                                            <p className="text-sm text-muted-foreground flex items-center gap-1">
+                                                <Clock className="h-3 w-3 md:hidden" />
+                                                {new Date(log.createdAt).toLocaleString()}
                                             </p>
                                         </div>
-                                        {/* Details */}
-                                        <p className="text-sm text-muted-foreground">
-                                            {log.details}
-                                        </p>
-                                        {/* User */}
-                                        <p className="text-sm text-muted-foreground flex items-center gap-1">
-                                            <Users className="h-3 w-3 md:hidden" />
-                                            {log.user}
-                                        </p>
-                                        {/* Timestamp */}
-                                        <p className="text-sm text-muted-foreground flex items-center gap-1">
-                                            <Clock className="h-3 w-3 md:hidden" />
-                                            {log.timestamp}
-                                        </p>
-                                        {/* Status Badge */}
-                                        <div className="flex items-center gap-2">
-                                            <span className="hidden md:block">
-                                                {getStatusIcon(log.status)}
-                                            </span>
-                                            {getStatusBadge(log.status)}
-                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
+                                        No audit logs yet.
                                     </div>
-                                ))}
+                                )}
                             </div>
                         </div>
-                        <div className="mt-4 flex justify-center">
-                            <Button variant="ghost" size="sm">
-                                View All Logs
-                            </Button>
-                        </div>
+                        {auditData && auditData.totalCount > auditData.limit && (
+                            <div className="mt-4 flex justify-center gap-2">
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={auditPage <= 1}
+                                    onClick={() => setAuditPage(p => p - 1)}
+                                >
+                                    Previous
+                                </Button>
+                                <span className="flex items-center text-sm text-muted-foreground">
+                                    Page {auditPage} of {Math.ceil(auditData.totalCount / auditData.limit)}
+                                </span>
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    disabled={auditPage >= Math.ceil(auditData.totalCount / auditData.limit)}
+                                    onClick={() => setAuditPage(p => p + 1)}
+                                >
+                                    Next
+                                </Button>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
 
-                {/* Danger Zone - Delete Workspace - Full width */}
-                <div className="lg:col-span-2 border border-destructive/20 rounded-lg p-6 bg-destructive/5 space-y-4">
+                {/* Danger Zone - Delete Workspace - Full width (owner only) */}
+                {authData?.ownsWorkspace && <div className="lg:col-span-2 border border-destructive/20 rounded-lg p-6 bg-destructive/5 space-y-4">
                     <div>
                         <h3 className="text-lg font-semibold text-destructive flex items-center gap-2">
                             <AlertTriangle className="h-5 w-5" />
@@ -493,7 +927,7 @@ function SettingsPage() {
                                                 </li>
                                                 <li className="flex items-center gap-2">
                                                     <XCircle className="h-4 w-4 text-destructive" />
-                                                    All uploaded files (2.4 GB)
+                                                    All uploaded files ({formatBytes(storageUsed)})
                                                 </li>
                                                 <li className="flex items-center gap-2">
                                                     <XCircle className="h-4 w-4 text-destructive" />
@@ -617,8 +1051,162 @@ function SettingsPage() {
                             </AlertDialogContent>
                         </AlertDialog>
                     </div>
-                </div>
+                </div>}
             </div>
+        </div>
+    )
+}
+
+function NotificationsContent() {
+    const { data: preferences, isLoading, isError } = useNotificationPreferences()
+    const updatePreferences = useUpdateNotificationPreferences()
+
+    const handleToggle = (field: "taskNotifications" | "collaborationNotifications" | "adminNotifications", value: boolean) => {
+        if (!preferences) return
+        updatePreferences.mutate({
+            ...preferences,
+            [field]: value,
+        })
+    }
+
+    if (isLoading) {
+        return (
+            <div className="space-y-4">
+                {[1, 2, 3].map(i => (
+                    <Card key={i} className="animate-pulse">
+                        <CardHeader>
+                            <div className="h-5 bg-muted rounded w-48" />
+                            <div className="h-4 bg-muted rounded w-72 mt-2" />
+                        </CardHeader>
+                        <CardContent><div className="h-6 bg-muted rounded w-12" /></CardContent>
+                    </Card>
+                ))}
+            </div>
+        )
+    }
+
+    if (isError || !preferences) {
+        return (
+            <Card>
+                <CardContent className="py-8 text-center text-muted-foreground">
+                    Failed to load notification preferences. Please refresh the page.
+                </CardContent>
+            </Card>
+        )
+    }
+
+    const categories = [
+        {
+            field: "taskNotifications" as const,
+            title: "Task Notifications",
+            description: "Assignment, updates, due dates, overdue reminders",
+        },
+        {
+            field: "collaborationNotifications" as const,
+            title: "Comments & Collaboration",
+            description: "Mentions, comments, attachments",
+        },
+        {
+            field: "adminNotifications" as const,
+            title: "Workspace & Admin",
+            description: "Member joins, role changes, board changes",
+        },
+    ]
+
+    return (
+        <div className="space-y-4">
+            <div className="space-y-1">
+                <h3 className="text-lg font-medium">Email Notifications</h3>
+                <p className="text-sm text-muted-foreground">
+                    Choose which email notifications you receive.
+                </p>
+            </div>
+            {categories.map(({ field, title, description }) => (
+                <Card key={field}>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                        <div className="space-y-1">
+                            <CardTitle className="text-base">{title}</CardTitle>
+                            <CardDescription>{description}</CardDescription>
+                        </div>
+                        <Switch
+                            checked={preferences[field]}
+                            onCheckedChange={(checked) => handleToggle(field, checked)}
+                        />
+                    </CardHeader>
+                </Card>
+            ))}
+        </div>
+    )
+}
+
+function SettingsPage() {
+    const { data: authData, isLoading: isAuthLoading } = useWorkspaceSettings()
+    const user = authData?.user
+    const userRole = user?.role ?? "member"
+    const isAdmin = userRole === "workspace_admin"
+
+    // Detect #notifications hash for deep-link (per D-09)
+    const [activeTab, setActiveTab] = useState(() => {
+        if (typeof window !== "undefined" && window.location.hash === "#notifications") {
+            return "notifications"
+        }
+        return "profile"
+    })
+
+    // Also listen for hash changes (e.g., user clicks email link while already on settings)
+    useEffect(() => {
+        const handleHashChange = () => {
+            if (window.location.hash === "#notifications") {
+                setActiveTab("notifications")
+            }
+        }
+        window.addEventListener("hashchange", handleHashChange)
+        return () => window.removeEventListener("hashchange", handleHashChange)
+    }, [])
+
+    if (isAuthLoading) {
+        return (
+            <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+        )
+    }
+
+    return (
+        <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="space-y-1">
+                <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
+                <p className="text-muted-foreground">
+                    Manage your account and workspace settings.
+                </p>
+            </div>
+
+            <Tabs value={activeTab} onValueChange={setActiveTab}>
+                <TabsList>
+                    {isAdmin && (
+                        <TabsTrigger value="workspace">Workspace Settings</TabsTrigger>
+                    )}
+                    <TabsTrigger value="profile">Profile</TabsTrigger>
+                    <TabsTrigger value="notifications">
+                        <Bell className="h-4 w-4 mr-1" />
+                        Notifications
+                    </TabsTrigger>
+                </TabsList>
+
+                {isAdmin && (
+                    <TabsContent value="workspace" className="mt-6">
+                        <WorkspaceSettingsContent />
+                    </TabsContent>
+                )}
+
+                <TabsContent value="profile" className="mt-6">
+                    <ProfileContent />
+                </TabsContent>
+
+                <TabsContent value="notifications" className="mt-6">
+                    <NotificationsContent />
+                </TabsContent>
+            </Tabs>
         </div>
     )
 }

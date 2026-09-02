@@ -1,399 +1,807 @@
-import { createFileRoute } from "@tanstack/react-router"
+import type React from "react"
+import { createFileRoute, useNavigate } from "@tanstack/react-router"
+import { useQuery } from "@tanstack/react-query"
+import { format, isBefore, addDays } from "date-fns"
 import { Button } from "@tracky/web/components/ui/button"
-import { Badge } from "@tracky/web/components/ui/badge"
 import { Input } from "@tracky/web/components/ui/input"
-import { Avatar, AvatarFallback, AvatarImage } from "@tracky/web/components/ui/avatar"
 import {
-    Search, Plus, SlidersHorizontal, X,
-    Calendar, Flag, Paperclip, MessageSquare, User, MoreHorizontal,
-    MoreVertical
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@tracky/web/components/ui/dropdown-menu"
+import {
+  Search,
+  Plus,
+  Calendar,
+  Flag,
+  Loader2,
+  X,
 } from "lucide-react"
-import { useState } from "react"
+import { useState, useMemo } from "react"
+import { useApi } from "@tracky/web/hooks/use-api"
+import { type Task } from "@tracky/web/hooks/use-tasks"
+import { TaskDetailPanel } from "@tracky/web/components/task-detail-panel"
+import { PriorityBadge } from "@tracky/web/components/task-card"
+import { CreateTaskDialog } from "@tracky/web/components/create-task-dialog"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@tracky/web/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@tracky/web/components/ui/select"
+import { Label } from "@tracky/web/components/ui/label"
+
+type TasksSearchParams = {
+  taskId?: string
+}
 
 export const Route = createFileRoute("/_authenticated/tasks")({
-    component: TasksPage,
+  component: TasksPage,
+  validateSearch: (search: Record<string, unknown>): TasksSearchParams => {
+    return {
+      taskId: typeof search.taskId === "string" ? search.taskId : undefined,
+    }
+  },
 })
 
-// Mock Data
-const tasks = [
-    { id: 1, title: "Update invoice template design", board: "Finance", status: "In Progress", due: "Jan 17, 2026", priority: "High", assignee: 1 },
-    { id: 2, title: "Fix login authentication bug", board: "Platform", status: "To Do", due: "Jan 18, 2026", priority: "Medium", assignee: 2 },
-    { id: 3, title: "Review Q1 sales proposal", board: "Sales", status: "To Do", due: "Jan 19, 2026", priority: "High", assignee: 1 },
-    { id: 4, title: "Prepare onboarding materials", board: "HR", status: "In Progress", due: "Jan 22, 2026", priority: "Low", assignee: 4 },
-    { id: 5, title: "Update API documentation", board: "Platform", status: "To Do", due: "Jan 25, 2026", priority: "Medium", assignee: 2 },
-    { id: 6, title: "Design new landing page mockup", board: "Marketing", status: "In Progress", due: "Jan 20, 2026", priority: "Medium", assignee: 3 },
-    { id: 7, title: "Schedule team retrospective meeting", board: "HR", status: "To Do", due: "Jan 23, 2026", priority: "Low", assignee: 4 },
-    { id: 8, title: "Conduct user research interviews", board: "Marketing", status: "To Do", due: "Jan 28, 2026", priority: "Low", assignee: 3 },
-]
+type TabId = "due-soon" | "overdue" | "all" | "completed"
+
+// Board type from API (list)
+type Board = {
+  id: string
+  name: string
+  color: string
+  workspaceId: string
+  description: string | null
+  visibility: "workspace" | "private"
+  autoArchiveDoneDays: number
+  createdById: string
+  position: number
+  createdAt: string
+  updatedAt: string
+  deletedAt: string | null
+}
+
+// Board detail type with columns
+type BoardWithColumns = {
+  id: string
+  name: string
+  color: string
+  columns: {
+    id: string
+    name: string
+    position: number
+    isDefault: boolean
+    isDoneColumn: boolean
+  }[]
+}
+
+// Extended task type with board info
+type TaskWithBoard = Task & { boardName: string; boardColor: string }
 
 function TasksPage() {
-    const [activeTab, setActiveTab] = useState("assigned-me")
-    const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null)
+  const api = useApi()
+  const navigate = useNavigate()
+  const { taskId: taskIdFromUrl } = Route.useSearch()
+  const [activeTab, setActiveTab] = useState<TabId>("all")
+  const [searchQuery, setSearchQuery] = useState("")
+  const [priorityFilter, setPriorityFilter] = useState<Set<string>>(new Set())
+  const [boardFilter, setBoardFilter] = useState<Set<string>>(new Set())
 
-    const tabs = [
-        { id: "assigned-me", label: "Assigned to Me" },
-        { id: "due-soon", label: "Due Soon" },
-        { id: "overdue", label: "Overdue" },
-        { id: "all", label: "All Tasks" },
-        { id: "completed", label: "Completed" },
-    ]
+  // Create task flow state
+  const [boardPickerOpen, setBoardPickerOpen] = useState(false)
+  const [selectedBoardId, setSelectedBoardId] = useState<string>("")
+  const [selectedColumnId, setSelectedColumnId] = useState<string>("")
+  const [selectedColumnName, setSelectedColumnName] = useState<string>("")
+  const [createTaskOpen, setCreateTaskOpen] = useState(false)
 
-    return (
-        <div className="h-full flex flex-col animate-in fade-in duration-500 -m-6">
-            {/* Header section */}
-            <div className="bg-background border-b border-border px-8 py-4 shrink-0 space-y-4">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <h1 className="text-2xl font-bold tracking-tight">Tasks</h1>
-                    </div>
-                    <Button className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm">
-                        <Plus className="mr-2 h-4 w-4" />
-                        Create Task
-                    </Button>
-                </div>
+  // Use URL as the source of truth for selected task
+  const selectedTaskId = taskIdFromUrl ?? null
 
-                <div className="flex items-center gap-6 border-b border-transparent">
-                    {tabs.map(tab => (
-                        <TabButton
-                            key={tab.id}
-                            active={activeTab === tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                        >
-                            {tab.label}
-                        </TabButton>
-                    ))}
-                </div>
+  // Update URL when task is selected/deselected
+  const handleTaskSelect = (taskId: string | null) => {
+    navigate({
+      to: "/tasks",
+      search: taskId ? { taskId } : {},
+      replace: true,
+    })
+  }
 
-                <div className="flex items-center justify-between pt-2">
-                    <div className="flex items-center gap-2">
-                        <Button variant="outline" className="h-9 border-dashed">
-                            <SlidersHorizontal className="mr-2 h-3.5 w-3.5" />
-                            Filters
-                        </Button>
-                        <Button variant="outline" className="h-9 border-dashed">
-                            <User className="mr-2 h-3.5 w-3.5" />
-                            Assignee
-                        </Button>
-                        <Button variant="outline" className="h-9 border-dashed">
-                            <Flag className="mr-2 h-3.5 w-3.5" />
-                            Priority
-                        </Button>
-                        <Button variant="outline" className="h-9 border-dashed">
-                            <Calendar className="mr-2 h-3.5 w-3.5" />
-                            Due Date
-                        </Button>
-                        <Button variant="ghost" className="h-9 text-muted-foreground hover:text-foreground text-sm">
-                            Reset Filters
-                        </Button>
-                    </div>
+  // Fetch current user info
+  const { data: userData } = useQuery({
+    queryKey: ["auth", "me"],
+    queryFn: async () => {
+      const response = await api.auth.me.$get()
+      if (!response.ok) {
+        throw new Error("Failed to fetch user")
+      }
+      return response.json()
+    },
+  })
 
-                    <div className="flex items-center gap-2">
-                        <div className="relative w-64">
-                            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                            <Input placeholder="Search tasks..." className="pl-9 h-9" />
-                        </div>
-                        <span className="text-sm text-muted-foreground mx-2">12 tasks</span>
-                    </div>
-                </div>
-            </div>
+  const currentUserId = userData?.user?.id
 
-            {/* Main Content Area */}
-            <div className="flex-1 min-h-0 flex bg-muted/10">
-                {/* Task List */}
-                <div className={`flex-1 overflow-y-auto p-6 transition-all duration-300 ${selectedTaskId ? 'pr-2' : ''}`}>
-                    <div className="rounded-lg border bg-background shadow-sm overflow-hidden">
-                        {/* List Header */}
-                        <div className="grid grid-cols-[30px_2fr_120px_120px_140px_80px_50px] gap-4 px-6 py-3 text-xs font-semibold text-muted-foreground bg-muted/5 border-b border-border items-center">
-                            <div className="flex items-center justify-center">
-                                {/* Header Checkbox mock */}
-                                <div className="h-4 w-4 rounded border border-input" />
-                            </div>
-                            <div>TASK TITLE</div>
-                            <div className={`${selectedTaskId ? 'hidden xl:block' : ''}`}>BOARD</div>
-                            <div className={`${selectedTaskId ? 'hidden' : 'block'}`}>STATUS</div>
-                            <div className={`${selectedTaskId ? 'hidden md:block' : ''}`}>DUE DATE</div>
-                            <div className={`${selectedTaskId ? 'hidden lg:block' : ''}`}>PRIORITY</div>
-                            <div className="text-right">ACTIONS</div>
-                        </div>
+  // Fetch all boards in the workspace
+  const { data: boards = [], isLoading: boardsLoading } = useQuery<Board[]>({
+    queryKey: ["boards"],
+    queryFn: async () => {
+      const response = await api.boards.$get()
+      if (!response.ok) {
+        throw new Error("Failed to fetch boards")
+      }
+      return response.json()
+    },
+  })
 
-                        {/* Rows */}
-                        <div className="divide-y divide-border">
-                            {tasks.map(task => (
-                                <div
-                                    key={task.id}
-                                    onClick={() => setSelectedTaskId(task.id === selectedTaskId ? null : task.id)}
-                                    className={`grid grid-cols-[30px_2fr_120px_120px_140px_80px_50px] gap-4 px-6 py-4 items-center cursor-pointer transition-colors hover:bg-muted/50 ${selectedTaskId === task.id ? 'bg-primary/5 hover:bg-primary/10' : ''}`}
-                                >
-                                    <div className="flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
-                                        <input type="checkbox" className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary accent-primary cursor-pointer" />
-                                    </div>
-                                    <div className="flex items-center gap-3 overflow-hidden">
-                                        <div className="min-w-0 font-medium text-sm truncate text-foreground">
-                                            {task.title}
-                                        </div>
-                                    </div>
-                                    <div className={`${selectedTaskId ? 'hidden xl:block' : ''}`}>
-                                        <BoardBadge board={task.board} />
-                                    </div>
-                                    <div className={`${selectedTaskId ? 'hidden' : 'block'}`}>
-                                        <StatusBadge status={task.status} />
-                                    </div>
-                                    <div className={`text-sm text-muted-foreground flex items-center gap-2 ${selectedTaskId ? 'hidden md:block' : ''}`}>
-                                        {task.due.includes("Jan 17") || task.due.includes("Jan 19") ? (
-                                            <AlertCircleIcon className="h-4 w-4 text-rose-500" />
-                                        ) : (
-                                            <Calendar className="h-4 w-4 text-slate-400" />
-                                        )}
-                                        <span className={task.due.includes("Jan 17") || task.due.includes("Jan 19") ? "text-rose-600 font-medium" : ""}>{task.due}</span>
-                                    </div>
-                                    <div className={`${selectedTaskId ? 'hidden lg:block' : ''}`}>
-                                        <PriorityBadge priority={task.priority} />
-                                    </div>
-                                    <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
-                                        <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
-                                            <MoreVertical className="h-4 w-4" />
-                                        </Button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                    {/* Pagination */}
-                    <div className="mt-4 flex items-center justify-between px-2">
-                        <span className="text-sm text-muted-foreground">Showing 1-8 of 12 tasks</span>
-                        <div className="flex items-center gap-1">
-                            <Button variant="outline" size="sm" className="h-8 bg-background" disabled>
-                                Previous
-                            </Button>
-                            <Button variant="default" size="sm" className="h-8 w-8 bg-primary text-primary-foreground p-0">1</Button>
-                            <Button variant="outline" size="sm" className="h-8 w-8 bg-background p-0">2</Button>
-                            <Button variant="outline" size="sm" className="h-8 bg-background">
-                                Next
-                            </Button>
-                        </div>
-                    </div>
-                </div>
+  // Fetch board members for create task dialog
+  const { data: createBoardMembersData } = useQuery({
+    queryKey: ["board-members", selectedBoardId],
+    queryFn: async () => {
+      const response = await api.boards[":id"].members.$get({
+        param: { id: selectedBoardId },
+      })
+      if (!response.ok) return { members: [] }
+      return response.json()
+    },
+    enabled: !!selectedBoardId,
+  })
 
-            </div>
+  const createBoardMembers = (createBoardMembersData?.members || []).map((member: { userId: string; user: { email: string; firstName: string | null; lastName: string | null; imageUrl: string | null }; role: string }) => ({
+    userId: member.userId,
+    email: member.user.email,
+    firstName: member.user.firstName,
+    lastName: member.user.lastName,
+    imageUrl: member.user.imageUrl,
+    role: member.role,
+  }))
 
-            {/* Detail Modal / Sheet Overlay */}
-            {selectedTaskId && (
-                <div className="fixed inset-0 z-50 flex justify-end" role="dialog">
-                    {/* Backdrop */}
-                    <div
-                        className="absolute inset-0 bg-black/40 backdrop-blur-[2px] animate-in fade-in duration-300"
-                        onClick={() => setSelectedTaskId(null)}
-                    />
+  // Fetch board detail with columns for create task dialog
+  const { data: selectedBoardDetail } = useQuery<BoardWithColumns>({
+    queryKey: ["board", selectedBoardId],
+    queryFn: async () => {
+      const response = await api.boards[":id"].$get({
+        param: { id: selectedBoardId },
+      })
+      if (!response.ok) {
+        throw new Error("Failed to fetch board")
+      }
+      return response.json()
+    },
+    enabled: !!selectedBoardId,
+  })
 
-                    {/* Panel */}
-                    <div className="relative w-full max-w-lg h-full border-l border-border bg-background flex flex-col shadow-2xl animate-in slide-in-from-right-10 duration-300">
-                        {(() => {
-                            const activeTask = tasks.find(t => t.id === selectedTaskId) || tasks[0]
-                            return (
-                                <>
-                                    {/* Panel Header */}
-                                    <div className="p-6 border-b border-border flex items-center justify-between bg-background">
-                                        <div className="flex items-center gap-3">
-                                            <BoardBadge board={activeTask.board} />
-                                            <div className="h-4 w-px bg-border" />
-                                            <span className="text-sm font-medium text-muted-foreground">TASK-{activeTask.id}</span>
-                                        </div>
-                                        <div className="flex items-center gap-1 -mr-2">
-                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground">
-                                                <MoreHorizontal className="h-4 w-4" />
-                                            </Button>
-                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-foreground" onClick={() => setSelectedTaskId(null)}>
-                                                <X className="h-4 w-4" />
-                                            </Button>
-                                        </div>
-                                    </div>
+  // Fetch tasks assigned to current user from all boards
+  const { data: allTasks = [], isLoading: tasksLoading } = useQuery<TaskWithBoard[]>({
+    queryKey: ["my-tasks", currentUserId, boards.map((b: Board) => b.id)],
+    queryFn: async (): Promise<TaskWithBoard[]> => {
+      if (!currentUserId) return []
+      // Fetch tasks assigned to current user from all boards in parallel
+      const tasksPromises = boards.map(async (board: Board) => {
+        try {
+          const response = await api.tasks.$get({
+            query: { boardId: board.id, assigneeId: currentUserId },
+          })
+          if (!response.ok) {
+            console.warn(`Failed to fetch tasks for board ${board.id} (${board.name})`)
+            return []
+          }
+          const tasksData = await response.json()
+          return tasksData.map((task): TaskWithBoard => ({
+            ...task,
+            boardName: board.name,
+            boardColor: board.color,
+          }))
+        } catch (error) {
+          console.error(`Error fetching tasks for board ${board.id}:`, error)
+          return []
+        }
+      })
 
-                                    {/* Panel Body */}
-                                    <div className="flex-1 overflow-y-auto p-6 space-y-8">
-                                        <div>
-                                            <div className="flex items-start justify-between gap-4 mb-4">
-                                                <h2 className="text-2xl font-bold leading-tight text-foreground">{activeTask.title}</h2>
-                                            </div>
-                                            <div className="flex items-center gap-3 text-sm">
-                                                <StatusBadge status={activeTask.status} />
-                                                <span className="text-muted-foreground">&bull;</span>
-                                                <span className="text-muted-foreground">Created just now</span>
-                                            </div>
-                                        </div>
+      const tasksArrays = await Promise.all(tasksPromises)
+      return tasksArrays.flat()
+    },
+    enabled: boards.length > 0 && !!currentUserId,
+  })
 
-                                        <div className="grid grid-cols-2 gap-6 p-5 bg-muted/30 rounded-lg border border-border/50">
-                                            <div className="space-y-1.5">
-                                                <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Due Date</span>
-                                                <div className="flex items-center gap-2 text-sm font-medium">
-                                                    <Calendar className="h-4 w-4 text-muted-foreground" />
-                                                    <span>{activeTask.due}</span>
-                                                </div>
-                                            </div>
-                                            <div className="space-y-1.5">
-                                                <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Priority</span>
-                                                <div className="flex items-center gap-2">
-                                                    <PriorityBadge priority={activeTask.priority} />
-                                                </div>
-                                            </div>
-                                            <div className="col-span-2 space-y-1.5 pt-2 border-t border-border/50">
-                                                <span className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Tags</span>
-                                                <div className="flex flex-wrap items-center gap-2">
-                                                    <Badge variant="secondary" className="rounded-md px-2.5 py-1 font-normal bg-background border border-border">Feature</Badge>
-                                                    <Badge variant="secondary" className="rounded-md px-2.5 py-1 font-normal bg-background border border-border">Q1 Goal</Badge>
-                                                    <button className="h-6 w-6 rounded-full border border-dashed border-muted-foreground/50 flex items-center justify-center hover:bg-muted text-muted-foreground transition-colors">
-                                                        <Plus className="h-3 w-3" />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
+  // Get the board for a selected task
+  const selectedTask = allTasks.find((t) => t.id === selectedTaskId)
+  const selectedTaskBoardId = selectedTask?.boardId
 
-                                        <div className="space-y-3">
-                                            <label className="text-base font-semibold text-foreground">Description</label>
-                                            <div className="min-h-[120px] text-sm leading-relaxed text-muted-foreground">
-                                                <p className="mb-2">This task needs to be completed before the end of the sprint. Please ensure all acceptance criteria are met.</p>
-                                                <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.</p>
-                                            </div>
-                                        </div>
+  // Fetch board members for the selected task's board (for assignment)
+  const { data: boardMembersData } = useQuery({
+    queryKey: ["board-members", selectedTaskBoardId],
+    queryFn: async () => {
+      const response = await api.boards[":id"].members.$get({
+        param: { id: selectedTaskBoardId! },
+      })
+      if (!response.ok) return { members: [] }
+      return response.json()
+    },
+    enabled: !!selectedTaskBoardId,
+  })
 
-                                        <div className="space-y-4">
-                                            <div className="flex items-center justify-between">
-                                                <label className="text-base font-semibold text-foreground">Attachments</label>
-                                                <Button variant="outline" size="sm" className="h-7 text-xs gap-1.5">
-                                                    <Plus className="h-3 w-3" /> Add File
-                                                </Button>
-                                            </div>
-                                            <div className="border-2 border-dashed border-muted rounded-xl p-8 flex flex-col items-center justify-center gap-2 text-center hover:bg-muted/30 transition-colors cursor-pointer group">
-                                                <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center group-hover:scale-110 transition-transform">
-                                                    <Paperclip className="h-5 w-5 text-muted-foreground" />
-                                                </div>
-                                                <div className="space-y-1">
-                                                    <p className="text-sm font-medium text-foreground">Click to upload or drag and drop</p>
-                                                    <p className="text-xs text-muted-foreground">SVG, PNG, JPG or GIF (max. 800x400px)</p>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
+  const boardMembersForTask = (boardMembersData?.members || []).map((member: { userId: string; user: { email: string; firstName: string | null; lastName: string | null; imageUrl: string | null }; role: string }) => ({
+    userId: member.userId,
+    email: member.user.email,
+    firstName: member.user.firstName,
+    lastName: member.user.lastName,
+    imageUrl: member.user.imageUrl,
+  }))
 
-                                    {/* Panel Footer (Activity/Comments) */}
-                                    <div className="p-6 border-t border-border bg-muted/30 backdrop-blur-sm">
-                                        <div className="flex items-center justify-between mb-4">
-                                            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                                                <MessageSquare className="h-4 w-4" />
-                                                Comments
-                                                <span className="text-muted-foreground font-normal">(2)</span>
-                                            </div>
-                                        </div>
+  // Filter tasks based on active tab and search
+  const filteredTasks = useMemo((): TaskWithBoard[] => {
+    const now = new Date()
+    const soonThreshold = addDays(now, 7)
 
-                                        <div className="flex gap-4">
-                                            <Avatar className="h-9 w-9 border-2 border-background shadow-sm">
-                                                <AvatarImage src="https://github.com/shadcn.png" />
-                                                <AvatarFallback>ME</AvatarFallback>
-                                            </Avatar>
-                                            <div className="flex-1">
-                                                <div className="relative">
-                                                    <textarea
-                                                        className="w-full text-sm bg-background border border-input rounded-xl px-4 py-3 min-h-[80px] focus:outline-none focus:ring-2 focus:ring-ring/20 focus:border-ring shadow-sm resize-none"
-                                                        placeholder="Write a comment..."
-                                                    />
-                                                    <div className="absolute bottom-2 right-2 flex items-center gap-2">
-                                                        <Button size="icon" variant="ghost" className="h-8 w-8 text-muted-foreground hover:text-foreground">
-                                                            <Paperclip className="h-4 w-4" />
-                                                        </Button>
-                                                        <Button size="sm" className="h-8 px-4 rounded-lg bg-primary hover:bg-primary/90 text-primary-foreground">Send</Button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </>
-                            )
-                        })()}
-                    </div>
-                </div>
-            )}
-        </div>
+    let filtered = allTasks.filter(
+      (task: TaskWithBoard) => !task.archivedAt && !task.deletedAt
     )
-}
 
-function TabButton({ children, active, onClick }: { children: React.ReactNode, active: boolean, onClick: () => void }) {
-    return (
-        <button
-            onClick={onClick}
-            className={`px-1 py-1 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${active
-                ? "border-primary text-primary"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-                }`}
-        >
-            {children}
-        </button>
-    )
-}
-
-function StatusBadge({ status }: { status: string }) {
-    // In progress, To Do
-    const isProgress = status === 'In Progress'
-    const isDone = status === 'Done'
-
-    return (
-        <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${isProgress ? "bg-primary/10 text-primary" :
-            isDone ? "bg-muted text-muted-foreground line-through" :
-                "bg-muted text-foreground"
-            }`}>
-            {status}
-        </span>
-    )
-}
-
-function BoardBadge({ board }: { board: string }) {
-    const colors = {
-        'Finance': 'bg-pink-100 text-pink-700',
-        'Platform': 'bg-blue-100 text-blue-700',
-        'Sales': 'bg-green-100 text-green-700',
-        'HR': 'bg-purple-100 text-purple-700',
-        'Marketing': 'bg-teal-100 text-teal-700',
-        'Design System': 'bg-rose-100 text-rose-700',
+    // Tab filters
+    switch (activeTab) {
+      case "due-soon":
+        filtered = filtered.filter((task: TaskWithBoard) => {
+          if (!task.dueDate) return false
+          const dueDate = new Date(task.dueDate)
+          return isBefore(dueDate, soonThreshold) && !isBefore(dueDate, now)
+        })
+        break
+      case "overdue":
+        filtered = filtered.filter((task: TaskWithBoard) => {
+          if (!task.dueDate) return false
+          const dueDate = new Date(task.dueDate)
+          return isBefore(dueDate, now) && !task.completedAt
+        })
+        break
+      case "completed":
+        filtered = filtered.filter((task: TaskWithBoard) => !!task.completedAt)
+        break
+      case "all":
+      default:
+        // Show non-completed tasks
+        filtered = filtered.filter((task: TaskWithBoard) => !task.completedAt)
+        break
     }
-    const color = colors[board as keyof typeof colors] || 'bg-slate-100 text-slate-700'
 
-    return (
-        <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-medium ${color}`}>
-            <span className="w-1.5 h-1.5 rounded-full bg-current opacity-50" />
-            {board}
-        </span>
-    )
-}
+    // Search filter
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      filtered = filtered.filter(
+        (task: TaskWithBoard) =>
+          task.title.toLowerCase().includes(query) ||
+          task.description?.toLowerCase().includes(query)
+      )
+    }
 
-function PriorityBadge({ priority }: { priority: string }) {
-    const color = {
-        'High': 'text-white bg-red-500',
-        'Medium': 'text-amber-800 bg-amber-100',
-        'Low': 'text-slate-600 bg-slate-100',
-    }[priority] || 'text-slate-500 bg-slate-50'
+    // Priority filter
+    if (priorityFilter.size > 0) {
+      filtered = filtered.filter((task: TaskWithBoard) =>
+        task.priority ? priorityFilter.has(task.priority) : false
+      )
+    }
 
-    return (
-        <span className={`inline-flex items-center px-2 py-0.5 rounded textxs font-medium ${color}`}>
-            {priority}
-        </span>
-    )
-}
+    // Board filter
+    if (boardFilter.size > 0) {
+      filtered = filtered.filter((task: TaskWithBoard) =>
+        boardFilter.has(task.boardId)
+      )
+    }
 
-function AlertCircleIcon(props: any) {
-    return (
-        <svg
-            {...props}
-            xmlns="http://www.w3.org/2000/svg"
-            width="24"
-            height="24"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+    // Sort by due date (earliest first), then by created date
+    filtered.sort((a: TaskWithBoard, b: TaskWithBoard) => {
+      if (a.dueDate && b.dueDate) {
+        return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
+      }
+      if (a.dueDate) return -1
+      if (b.dueDate) return 1
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    })
+
+    return filtered
+  }, [allTasks, activeTab, searchQuery, priorityFilter, boardFilter])
+
+  const tabs = [
+    { id: "all" as const, label: "Active" },
+    { id: "due-soon" as const, label: "Due Soon" },
+    { id: "overdue" as const, label: "Overdue" },
+    { id: "completed" as const, label: "Completed" },
+  ]
+
+  const isLoading = boardsLoading || tasksLoading
+
+  return (
+    <div className="h-full flex flex-col animate-in fade-in duration-500 -m-6">
+      {/* Header section */}
+      <div className="bg-background border-b border-border px-8 py-4 shrink-0 space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Tasks</h1>
+          </div>
+          <Button
+            className="bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm"
+            onClick={() => {
+              setSelectedBoardId("")
+              setSelectedColumnId("")
+              setSelectedColumnName("")
+              setBoardPickerOpen(true)
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Create Task
+          </Button>
+        </div>
+
+        <div className="flex items-center gap-6 border-b border-transparent">
+          {tabs.map((tab) => (
+            <TabButton
+              key={tab.id}
+              active={activeTab === tab.id}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.label}
+            </TabButton>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between pt-2">
+          <div className="flex items-center gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className={`h-9 border-dashed ${priorityFilter.size > 0 ? "border-primary text-primary" : ""}`}>
+                  <Flag className="mr-2 h-3.5 w-3.5" />
+                  Priority
+                  {priorityFilter.size > 0 && (
+                    <span className="ml-1.5 rounded-full bg-primary text-primary-foreground text-xs px-1.5 py-0.5 leading-none">
+                      {priorityFilter.size}
+                    </span>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-40">
+                <DropdownMenuLabel>Priority</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {(["low", "medium", "high"] as const).map((priority) => (
+                  <DropdownMenuCheckboxItem
+                    key={priority}
+                    checked={priorityFilter.has(priority)}
+                    onCheckedChange={(checked) => {
+                      setPriorityFilter((prev) => {
+                        const next = new Set(prev)
+                        if (checked) next.add(priority)
+                        else next.delete(priority)
+                        return next
+                      })
+                    }}
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    {priority.charAt(0).toUpperCase() + priority.slice(1)}
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" className={`h-9 border-dashed ${boardFilter.size > 0 ? "border-primary text-primary" : ""}`}>
+                  <Calendar className="mr-2 h-3.5 w-3.5" />
+                  Board
+                  {boardFilter.size > 0 && (
+                    <span className="ml-1.5 rounded-full bg-primary text-primary-foreground text-xs px-1.5 py-0.5 leading-none">
+                      {boardFilter.size}
+                    </span>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-52">
+                <DropdownMenuLabel>Board</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                {boards.map((board) => (
+                  <DropdownMenuCheckboxItem
+                    key={board.id}
+                    checked={boardFilter.has(board.id)}
+                    onCheckedChange={(checked) => {
+                      setBoardFilter((prev) => {
+                        const next = new Set(prev)
+                        if (checked) next.add(board.id)
+                        else next.delete(board.id)
+                        return next
+                      })
+                    }}
+                    onSelect={(e) => e.preventDefault()}
+                  >
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="w-2 h-2 rounded-full shrink-0"
+                        style={{ backgroundColor: board.color || "#64748b" }}
+                      />
+                      <span className="truncate">{board.name}</span>
+                    </span>
+                  </DropdownMenuCheckboxItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            {(priorityFilter.size > 0 || boardFilter.size > 0) && (
+              <Button
+                variant="ghost"
+                className="h-9 text-muted-foreground hover:text-foreground text-sm"
+                onClick={() => {
+                  setPriorityFilter(new Set())
+                  setBoardFilter(new Set())
+                }}
+              >
+                <X className="mr-1 h-3.5 w-3.5" />
+                Clear filters
+              </Button>
+            )}
+            {searchQuery && (
+              <Button
+                variant="ghost"
+                className="h-9 text-muted-foreground hover:text-foreground text-sm"
+                onClick={() => setSearchQuery("")}
+              >
+                Clear Search
+              </Button>
+            )}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className="relative w-64">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Search tasks..."
+                className="pl-9 h-9"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <span className="text-sm text-muted-foreground mx-2">
+              {filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 min-h-0 flex bg-muted/10">
+        {/* Task List */}
+        <div
+          className={`flex-1 overflow-y-auto p-6 transition-all duration-300 ${selectedTaskId ? "pr-2" : ""}`}
         >
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" x2="12" y1="8" y2="12" />
-            <line x1="12" x2="12.01" y1="16" y2="16" />
-        </svg>
-    )
+          {isLoading ? (
+            <div className="flex items-center justify-center h-64">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : filteredTasks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-64 gap-4">
+              <p className="text-muted-foreground">No tasks found</p>
+              {searchQuery && (
+                <Button variant="outline" onClick={() => setSearchQuery("")}>
+                  Clear search
+                </Button>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="rounded-lg border bg-background shadow-sm overflow-hidden">
+                {/* List Header */}
+                <div className="grid grid-cols-[30px_2fr_120px_120px_140px_80px] gap-4 px-6 py-3 text-xs font-semibold text-muted-foreground bg-muted/5 border-b border-border items-center">
+                  <div className="flex items-center justify-center">
+                    <div className="h-4 w-4 rounded border border-input" />
+                  </div>
+                  <div>TASK TITLE</div>
+                  <div className={`${selectedTaskId ? "hidden xl:block" : ""}`}>BOARD</div>
+                  <div className={`${selectedTaskId ? "hidden" : "block"}`}>STATUS</div>
+                  <div className={`${selectedTaskId ? "hidden md:block" : ""}`}>DUE DATE</div>
+                  <div className={`${selectedTaskId ? "hidden lg:block" : ""}`}>PRIORITY</div>
+                </div>
+
+                {/* Rows */}
+                <div className="divide-y divide-border">
+                  {filteredTasks.map((task: TaskWithBoard) => (
+                    <TaskRow
+                      key={task.id}
+                      task={task}
+                      isSelected={task.id === selectedTaskId}
+                      onSelect={() => handleTaskSelect(task.id === selectedTaskId ? null : task.id)}
+                      hideColumns={!!selectedTaskId}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              {/* Pagination placeholder */}
+              <div className="mt-4 flex items-center justify-between px-2">
+                <span className="text-sm text-muted-foreground">
+                  Showing {filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Task Detail Panel */}
+      {selectedTaskId && selectedTaskBoardId && (
+        <TaskDetailPanel
+          taskId={selectedTaskId}
+          boardId={selectedTaskBoardId}
+          onClose={() => handleTaskSelect(null)}
+          workspaceMembers={boardMembersForTask}
+        />
+      )}
+
+      {/* Board/Column Picker Dialog */}
+      <Dialog open={boardPickerOpen} onOpenChange={setBoardPickerOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Create Task</DialogTitle>
+            <DialogDescription>
+              Select a board and column for the new task.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {boardsLoading ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : boards.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No boards available. Create a board first to add tasks.
+              </p>
+            ) : (
+            <>
+            <div className="space-y-2">
+              <Label>Board</Label>
+              <Select
+                value={selectedBoardId}
+                onValueChange={(value) => {
+                  setSelectedBoardId(value)
+                  setSelectedColumnId("")
+                  setSelectedColumnName("")
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a board" />
+                </SelectTrigger>
+                <SelectContent>
+                  {boards.map((board) => (
+                    <SelectItem key={board.id} value={board.id}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: board.color || "#64748b" }}
+                        />
+                        {board.name}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {selectedBoardDetail && (
+              <div className="space-y-2">
+                <Label>Column</Label>
+                <Select
+                  value={selectedColumnId}
+                  onValueChange={(value) => {
+                    setSelectedColumnId(value)
+                    const col = selectedBoardDetail.columns.find((c) => c.id === value)
+                    setSelectedColumnName(col?.name ?? "")
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a column" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectedBoardDetail.columns
+                      .slice()
+                      .sort((a, b) => a.position - b.position)
+                      .map((col) => (
+                        <SelectItem key={col.id} value={col.id}>
+                          {col.name}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setBoardPickerOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                disabled={!selectedBoardId || !selectedColumnId}
+                onClick={() => {
+                  setBoardPickerOpen(false)
+                  setCreateTaskOpen(true)
+                }}
+              >
+                Continue
+              </Button>
+            </div>
+            </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Task Dialog */}
+      {selectedBoardId && selectedColumnId && (
+        <CreateTaskDialog
+          open={createTaskOpen}
+          onOpenChange={setCreateTaskOpen}
+          boardId={selectedBoardId}
+          columnId={selectedColumnId}
+          columnName={selectedColumnName}
+          workspaceMembers={createBoardMembers}
+        />
+      )}
+    </div>
+  )
+}
+
+function TaskRow({
+  task,
+  isSelected,
+  onSelect,
+  hideColumns,
+}: {
+  task: TaskWithBoard
+  isSelected: boolean
+  onSelect: () => void
+  hideColumns: boolean
+}) {
+  const now = new Date()
+  const isOverdue = task.dueDate && isBefore(new Date(task.dueDate), now) && !task.completedAt
+
+  return (
+    <div
+      onClick={onSelect}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          onSelect()
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      className={`grid grid-cols-[30px_2fr_120px_120px_140px_80px] gap-4 px-6 py-4 items-center cursor-pointer transition-colors hover:bg-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 ${
+        isSelected ? "bg-primary/5 hover:bg-primary/10" : ""
+      }`}
+    >
+      <div className="flex items-center justify-center">
+        {task.completedAt ? (
+          <div className="h-4 w-4 rounded-full bg-emerald-500 flex items-center justify-center">
+            <svg className="h-2.5 w-2.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+        ) : (
+          <div className="h-4 w-4 rounded-full border-2 border-muted-foreground/30" />
+        )}
+      </div>
+      <div className="flex items-center gap-3 overflow-hidden">
+        <div
+          className={`min-w-0 font-medium text-sm truncate ${
+            task.completedAt ? "text-muted-foreground line-through" : "text-foreground"
+          }`}
+        >
+          {task.title}
+        </div>
+      </div>
+      <div className={`${hideColumns ? "hidden xl:block" : ""}`}>
+        <BoardBadge name={task.boardName} color={task.boardColor} />
+      </div>
+      <div className={`${hideColumns ? "hidden" : "block"}`}>
+        <StatusBadge completedAt={task.completedAt} />
+      </div>
+      <div
+        className={`text-sm text-muted-foreground flex items-center gap-2 ${
+          hideColumns ? "hidden md:flex" : ""
+        }`}
+      >
+        {task.dueDate ? (
+          <>
+            {isOverdue ? (
+              <AlertCircleIcon className="h-4 w-4 text-rose-500" />
+            ) : (
+              <Calendar className="h-4 w-4 text-slate-400" />
+            )}
+            <span className={isOverdue ? "text-rose-600 font-medium" : ""}>
+              {format(new Date(task.dueDate), "MMM d, yyyy")}
+            </span>
+          </>
+        ) : (
+          <span className="text-muted-foreground/50">No due date</span>
+        )}
+      </div>
+      <div className={`${hideColumns ? "hidden lg:block" : ""}`}>
+        <PriorityBadge priority={task.priority} />
+      </div>
+    </div>
+  )
+}
+
+function TabButton({
+  children,
+  active,
+  onClick,
+}: {
+  children: React.ReactNode
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-1 py-1 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
+        active
+          ? "border-primary text-primary"
+          : "border-transparent text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+function StatusBadge({ completedAt }: { completedAt: string | null }) {
+  const isDone = !!completedAt
+
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium ${
+        isDone ? "bg-emerald-100 text-emerald-700" : "bg-muted text-foreground"
+      }`}
+    >
+      {isDone ? "Done" : "Active"}
+    </span>
+  )
+}
+
+function BoardBadge({ name, color }: { name: string; color?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700">
+      <span
+        className="w-1.5 h-1.5 rounded-full"
+        style={{ backgroundColor: color || "#64748b" }}
+      />
+      {name}
+    </span>
+  )
+}
+
+function AlertCircleIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg
+      {...props}
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" x2="12" y1="8" y2="12" />
+      <line x1="12" x2="12.01" y1="16" y2="16" />
+    </svg>
+  )
 }

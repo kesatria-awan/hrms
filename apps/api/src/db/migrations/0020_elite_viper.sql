@@ -1,0 +1,1 @@
+ALTER TABLE `task_assignees` ADD `due_date_email_sent` integer DEFAULT false NOT NULL;

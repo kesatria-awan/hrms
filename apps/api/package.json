@@ -1,49 +1,50 @@
 {
-    "name": "@tracky/api",
-    "type": "module",
-    "version": "1.0.0",
-    "private": true,
-    "license": "MIT",
-    "exports": {
-      "./routes": "./src/routes/index.ts",
-      "./schema": "./src/db/schema/index.ts"
-    },
-    "scripts": {
-      "dev": "wrangler dev",
-      "deploy": "wrangler deploy --minify",
-      "cf-typegen": "wrangler types --env-interface CloudflareBindings",
-      "test": "cross-env NODE_ENV=test vitest",
-      "lint": "eslint .",
-      "lint:fix": "npm run lint --fix",
-      "db:generate": "drizzle-kit generate",
-      "db:migrate:local": "wrangler d1 migrations apply tracky-api --local",
-      "db:migrate:remote": "wrangler d1 migrations apply tracky-api --remote"
-    },
-    "dependencies": {
-      "@hono/zod-openapi": "^1.1.4",
-      "@tracky/eslint-config": "workspace:^",
-      "@scalar/hono-api-reference": "^0.9.24",
-      "dotenv": "^17.2.3",
-      "drizzle-orm": "^0.44.7",
-      "drizzle-zod": "^0.8.3",
-      "hono": "^4.10.4",
-      "hono-pino": "^0.10.3",
-      "pino": "^10.1.0",
-      "pino-pretty": "^13.1.2",
-      "stoker": "^2.0.1",
-      "zod": "^4.1.12"
-    },
-    "devDependencies": {
-      "@cloudflare/vitest-pool-workers": "^0.10.5",
-      "@cloudflare/workers-types": "^4.20251106.1",
-      "@types/node": "^24.10.0",
-      "cross-env": "^10.1.0",
-      "drizzle-kit": "^0.31.6",
-      "eslint": "^9.39.1",
-      "eslint-plugin-drizzle": "^0.2.3",
-      "eslint-plugin-format": "^1.0.2",
-      "tsx": "^4.20.6",
-      "vitest": "^3.2.4",
-      "wrangler": "^4.54.0"
-    }
+  "name": "@tracky/api",
+  "type": "module",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "exports": {
+    "./routes": "./src/routes/index.ts",
+    "./schema": "./src/db/schema/index.ts"
+  },
+  "scripts": {
+    "dev": "wrangler dev --ip 0.0.0.0",
+    "deploy": "wrangler deploy --minify",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "test": "cross-env NODE_ENV=test vitest",
+    "lint": "eslint .",
+    "lint:fix": "npm run lint --fix",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply tracky --local",
+    "db:migrate:remote": "wrangler d1 migrations apply tracky --remote"
+  },
+  "dependencies": {
+    "@hono/zod-openapi": "^1.1.4",
+    "@scalar/hono-api-reference": "^0.9.24",
+    "@tracky/eslint-config": "workspace:^",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.44.7",
+    "drizzle-zod": "^0.8.3",
+    "hono": "^4.10.4",
+    "hono-pino": "^0.10.3",
+    "jose": "^6.2.2",
+    "pino": "^10.1.0",
+    "pino-pretty": "^13.1.2",
+    "stoker": "^2.0.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.10.5",
+    "@cloudflare/workers-types": "^4.20251106.1",
+    "@types/node": "^24.10.0",
+    "cross-env": "^10.1.0",
+    "drizzle-kit": "^0.31.6",
+    "eslint": "^9.39.1",
+    "eslint-plugin-drizzle": "^0.2.3",
+    "eslint-plugin-format": "^1.0.2",
+    "tsx": "^4.20.6",
+    "vitest": "^3.2.4",
+    "wrangler": "^4.54.0"
   }
+}
