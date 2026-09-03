@@ -1,6 +1,6 @@
 import type { MiddlewareHandler } from "hono";
 
-import type { UserRole, WorkspaceMemberRole } from "@/api/db/schema";
+import type { UserRole } from "@/api/db/schema";
 import type { AppEnv } from "@/api/lib/types";
 
 import { verifyAccessToken } from "@/api/lib/jwt";
@@ -11,7 +11,7 @@ import { verifyAccessToken } from "@/api/lib/jwt";
  */
 export function jwtAuth(): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    // Skip verification if userId is already set (for tests with mock auth — per D-06)
+    // Skip verification if userId is already set (for tests with mock auth)
     if (c.get("userId")) {
       await next();
       return;
@@ -31,9 +31,6 @@ export function jwtAuth(): MiddlewareHandler<AppEnv> {
     c.set("userId", payload.sub);
     c.set("userEmail", payload.email);
     c.set("userRole", payload.role as UserRole);
-    c.set("workspaceId", payload.workspaceId);
-    c.set("workspaceRole", payload.workspaceRole as WorkspaceMemberRole | null);
-    c.set("isSuperAdmin", payload.isSuperAdmin);
     c.set("emailVerifiedAt", payload.emailVerifiedAt ?? null);
 
     await next();
@@ -42,8 +39,6 @@ export function jwtAuth(): MiddlewareHandler<AppEnv> {
 
 /**
  * Optional JWT authentication middleware
- * Allows unauthenticated requests. Sets auth context if valid token is present,
- * otherwise continues without error.
  */
 export function optionalJwtAuth(): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
@@ -53,23 +48,27 @@ export function optionalJwtAuth(): MiddlewareHandler<AppEnv> {
       return;
     }
 
-    try {
-      const token = authHeader.slice(7);
-      const payload = await verifyAccessToken(token, c.env.JWT_SECRET);
-      if (payload) {
-        c.set("userId", payload.sub);
-        c.set("userEmail", payload.email);
-        c.set("userRole", payload.role as UserRole);
-        c.set("workspaceId", payload.workspaceId);
-        c.set("workspaceRole", payload.workspaceRole as WorkspaceMemberRole | null);
-        c.set("isSuperAdmin", payload.isSuperAdmin);
-        c.set("emailVerifiedAt", payload.emailVerifiedAt ?? null);
-      }
-    }
-    catch {
-      // Swallow — optional auth continues without context
+    const token = authHeader.slice(7);
+    const payload = await verifyAccessToken(token, c.env.JWT_SECRET);
+    if (payload) {
+      c.set("userId", payload.sub);
+      c.set("userEmail", payload.email);
+      c.set("userRole", payload.role as UserRole);
+      c.set("emailVerifiedAt", payload.emailVerifiedAt ?? null);
     }
 
+    await next();
+  };
+}
+
+/**
+ * HR admin guard — must be used after jwtAuth()
+ */
+export function requireAdmin(): MiddlewareHandler<AppEnv> {
+  return async (c, next) => {
+    if (c.get("userRole") !== "hr_admin") {
+      return c.json({ message: "Forbidden — HR admin only" }, 403);
+    }
     await next();
   };
 }

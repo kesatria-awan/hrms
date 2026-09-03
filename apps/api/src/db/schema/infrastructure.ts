@@ -77,6 +77,7 @@ export const refreshTokens = sqliteTable(
 );
 
 export const auditLogSelectSchema = createSelectSchema(auditLogs);
+export const selectNotificationSchema = createSelectSchema(notifications);
 export type AuditLog = typeof auditLogs.$inferSelect;
 export type Notification = typeof notifications.$inferSelect;
 export type RefreshToken = typeof refreshTokens.$inferSelect;

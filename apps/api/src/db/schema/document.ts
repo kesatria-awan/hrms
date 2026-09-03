@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { createInsertSchema, createSelectSchema } from "drizzle-zod";
+import { createSelectSchema } from "drizzle-zod";
 
 import { employees } from "./employee";
 
