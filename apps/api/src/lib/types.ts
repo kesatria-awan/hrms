@@ -12,10 +12,12 @@ export type AppEnv = {
     ASSETS: Fetcher;
     DB: D1Database;
     JWT_SECRET: string;
-    // Email (OTP via mailcow relay on KawanPro-VM)
-    EMAIL_PROVIDER?: string; // "mailcow-relay" | "log"
-    MAIL_RELAY_URL?: string;
-    MAIL_RELAY_API_KEY?: string;
+    // Email (OTP via direct SMTP to public mailcow)
+    EMAIL_PROVIDER?: string; // "smtp-direct" | "log"
+    SMTP_HOST?: string;
+    SMTP_PORT?: string;
+    SMTP_USER?: string;
+    SMTP_PASS?: string;
     // Frontend URL for redirects
     FRONTEND_URL?: string;
     // E2E testing mode: returns OTP in response

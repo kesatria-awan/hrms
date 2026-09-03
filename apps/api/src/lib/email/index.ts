@@ -1,26 +1,30 @@
 import type { EmailProvider, EmailSendParams, EmailSendResult } from "./types";
 
-import { MailcowRelayProvider } from "./mailcow-relay";
+import { SmtpDirectProvider } from "./smtp-direct";
 
 export type { EmailProvider, EmailSendParams, EmailSendResult };
 
 export type EmailEnv = {
-  EMAIL_PROVIDER?: string; // "mailcow-relay" | "log"
-  MAIL_RELAY_URL?: string;
-  MAIL_RELAY_API_KEY?: string;
+  EMAIL_PROVIDER?: string; // "smtp-direct" | "log"
+  SMTP_HOST?: string; // securemail.kawan.pro
+  SMTP_PORT?: string;
+  SMTP_USER?: string; // hr@kesatria.my
+  SMTP_PASS?: string;
 };
 
 export function createEmailProvider(env: EmailEnv): EmailProvider {
-  const provider = env.EMAIL_PROVIDER ?? "mailcow-relay";
+  const provider = env.EMAIL_PROVIDER ?? "smtp-direct";
   switch (provider) {
-    case "mailcow-relay": {
-      if (!env.MAIL_RELAY_URL || !env.MAIL_RELAY_API_KEY) {
-        throw new Error("MAIL_RELAY_URL and MAIL_RELAY_API_KEY are required when EMAIL_PROVIDER is 'mailcow-relay'");
+    case "smtp-direct": {
+      if (!env.SMTP_HOST || !env.SMTP_USER || !env.SMTP_PASS) {
+        throw new Error("SMTP_HOST, SMTP_USER and SMTP_PASS are required when EMAIL_PROVIDER is 'smtp-direct'");
       }
-      return new MailcowRelayProvider({
-        MAIL_RELAY_URL: env.MAIL_RELAY_URL,
-        MAIL_RELAY_API_KEY: env.MAIL_RELAY_API_KEY,
-      }) as unknown as EmailProvider;
+      return new SmtpDirectProvider({
+        SMTP_HOST: env.SMTP_HOST,
+        SMTP_PORT: env.SMTP_PORT,
+        SMTP_USER: env.SMTP_USER,
+        SMTP_PASS: env.SMTP_PASS,
+      });
     }
     case "log":
       // Dev/test: log instead of sending
